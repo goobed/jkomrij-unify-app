@@ -1,0 +1,27 @@
+# Node
+node_modules
+frontend/dist
+frontend/.env
+frontend/vite.log
+
+# Go
+backend/bin
+backend/tmp
+backend/server.log
+
+# Terraform
+**/.terraform
+*.tfstate
+*.tfstate.*
+infra/terraform/terraform.tfvars
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Editor/OS
+.DS_Store
+*.swp
+
+# Local env
+.env

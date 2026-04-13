@@ -1,0 +1,5833 @@
+= Installing and Configuring CloudBees Unify Feature Management
+:product-area: FM
+:edition-required: Edition 2 (or standalone FM purchase)
+:journey-slug: fm/ui-path
+:toc: left
+:toclevels: 3
+
+[cols="1,2"]
+|===
+|**Author(s)**
+|**Details**
+
+|Zach Stace (zstace)
+|Team: PS
+
+Date: 2026-03-11
+
+|**Required Check(s)**
+|**Status**
+
+|PS Official
+|Pending
+
+|ENG Approval
+|Pending
+
+|===
+
+
+== Overview
+
+This installation document provides comprehensive guidance for integrating CloudBees Unify Feature Management into applications. The document uses a theme park web application built with **Go** (backend) and **React** (frontend) as a reference implementation, demonstrating feature flag patterns from basic boolean toggles to advanced targeting and experimentation.
+
+=== What is Feature Management?
+
+Feature Management is a software development practice that decouples code deployment from feature release. Instead of deploying code to release features, teams deploy code with features hidden behind configuration flags, then reveal features through the CloudBees Unify platform.
+
+**Key Benefits:**
+
+* **Risk Reduction**: Test in production with limited exposure
+* **Faster Recovery**: Instant rollback without redeployment
+* **Experimentation**: A/B testing and gradual rollouts
+* **Personalization**: Target features to specific users
+* **Operations Control**: Kill switches for problematic features
+
+== Architecture
+
+This document demonstrates feature management integration using a distributed web application:
+
+**Architecture Components:**
+
+* **Frontend (React + JavaScript)**: UI layer that displays feature flag results from backend API
+* **Backend (Go)**: Server-side feature flag evaluation for business logic
+* **CloudBees Unify Platform**: Centralized flag management and configuration
+* **SDK Communication**: Real-time flag updates via Server-Sent Events (SSE) with 60-second polling backup
+
+NOTE: This tutorial uses a **backend-only SDK integration pattern**. The Go backend evaluates feature flags and returns results via REST API. The frontend does not include the CloudBees SDK. This is the recommended pattern for server-side applications as documented in the https://docs.cloudbees.com/docs/cloudbees-feature-management-api/latest/[CloudBees SDK Reference].
+
+== Requirements
+
+=== Prerequisites
+
+==== CloudBees Platform Requirements
+
+* **Active CloudBees Unify account**
+* **CloudBees Unify Edition 2** (Feature Management is not available in Edition 1)
+* **Feature Management enabled** for your organization
+* **Appropriate permissions** via role assignment:
+** **Admin role** (recommended for initial setup - provides full access), OR
+** **Custom role** with at minimum:
+*** Flag: Create, Update (feature flags management)
+*** Environment: Create, Update (environment management)
+*** Custom property: Create, Update (user-defined attributes)
+*** Target group: Create, Update (user segmentation)
+
+==== Technical Requirements
+
+* **Supported SDK language**: Your application must use one of the following languages:
+** **Client-side SDKs**: JavaScript (browser), React Native, Android, iOS/tvOS
+** **Server-side SDKs**: Go, Java, Node.js, Python, Ruby, PHP, .NET/C#, C/C++
+** See https://docs.cloudbees.com/docs/cloudbees-unify/latest/install-sdk/[SDK installation guide] for full list
+* **SDK version 6.x or higher** (do not use SDK versions prior to 6.x)
+* **Network connectivity**: Outbound HTTPS access to CloudBees domains:
+** `https://cloudbees.io` (UI and authentication)
+** `https://api.cloudbees.io` (API requests)
+** `https://rox-state.cloudbees.io` (flag state)
+** `https://rox-conf.cloudbees.io` (flag configuration)
+** `https://fm-analytics.cloudbees.io` (analytics)
+** `https://sdk-notification-service.cloudbees.io/sse` (real-time updates via Server-Sent Events)
+* **Firewall configuration**: If your organization uses network allowlists/firewalls, the domains above must be allowlisted for outbound traffic
+
+[NOTE]
+====
+**For locked-down/private network environments**: CloudBees offers single-tenant deployments to establish secure private connections. Contact CloudBees sales if your SCM, CI/CD, or deployment environments are on private networks.
+====
+
+[NOTE]
+====
+**Security and compliance**: CloudBees Feature Management is SOC 2 Type II compliant. The platform does not have access to or store end-user PII (personally identifiable information). Flag evaluations occur client-side using locally available attributes.
+====
+
+==== Development Environment
+
+This tutorial requires the following tools. Installation instructions are provided below for both macOS and Linux.
+
+**Required Tools:**
+
+* Go 1.20 or higher (backend development)
+* Node.js 18+ and npm (frontend development)
+
+== Environment Setup
+
+This section provides installation instructions for the required development tools. Choose your operating system and follow the steps.
+
+=== macOS Setup
+
+Install required tools using Homebrew:
+
+[source,console]
+----
+$ brew install go node
+----
+
+**Expected output:**
+----
+==> Downloading https://formulae.brew.sh/...
+==> Installing go
+==> Installing node
+...
+🍺  go was successfully installed!
+🍺  node was successfully installed!
+----
+
+==== Verify Installations
+
+[source,console]
+----
+$ go version
+$ node --version
+$ npm --version
+----
+
+**Expected output (versions may vary):**
+----
+go version go1.26.1 darwin/arm64
+v25.8.1
+11.11.0
+----
+
+[TIP]
+====
+If any command fails with "command not found":
+1. Close and reopen your terminal
+2. Rerun the verification commands
+3. If still failing, rerun the installation step
+====
+
+=== Linux Setup (Ubuntu/Debian)
+
+==== Update Package Manager
+
+[source,console]
+----
+$ sudo apt update
+----
+
+**Expected output:**
+----
+Hit:1 http://archive.ubuntu.com/ubuntu jammy InRelease
+Get:2 http://archive.ubuntu.com/ubuntu jammy-updates InRelease
+...
+Reading package lists... Done
+----
+
+==== Install Go
+
+[source,console]
+----
+$ sudo apt install golang-go
+$ go version
+----
+
+**Expected output:**
+----
+go version go1.21.1 linux/amd64
+----
+
+If the version is below 1.20, install from official Go downloads:
+
+[source,console]
+----
+$ wget https://go.dev/dl/go1.26.1.linux-amd64.tar.gz
+$ sudo rm -rf /usr/local/go
+$ sudo tar -C /usr/local -xzf go1.26.1.linux-amd64.tar.gz
+$ echo 'export PATH=$PATH:/usr/local/go/bin' >> ~/.bashrc
+$ source ~/.bashrc
+$ go version
+----
+
+**Expected output:**
+----
+go version go1.26.1 linux/amd64
+----
+
+==== Install Node.js
+
+[source,console]
+----
+$ curl -fsSL https://deb.nodesource.com/setup_23.x | sudo -E bash -
+$ sudo apt-get install -y nodejs
+----
+
+**Expected output:**
+----
+## Installing the NodeSource Node.js 23.x repo...
+...
+nodejs is already the newest version
+----
+
+Verify installation:
+
+[source,console]
+----
+$ node --version
+$ npm --version
+----
+
+**Expected output:**
+----
+v23.6.0
+10.9.0
+----
+
+=== Linux Setup (Fedora/RHEL/CentOS)
+
+==== Install Go
+
+[source,console]
+----
+$ sudo dnf install golang
+$ go version
+----
+
+**Expected output:**
+----
+go version go1.23.0 linux/amd64
+----
+
+If the version is below 1.20, install from official Go downloads (use same commands as Ubuntu section above).
+
+==== Install Node.js
+
+[source,console]
+----
+$ sudo dnf install nodejs
+$ node --version
+$ npm --version
+----
+
+**Expected output:**
+----
+v22.11.0
+10.9.0
+----
+
+=== Verify Complete Setup
+
+After installation on any platform, verify all tools are working:
+
+[source,console]
+----
+$ go version && node --version && npm --version
+----
+
+**Expected output (versions may vary):**
+----
+go version go1.26.1 darwin/arm64
+v25.8.1
+11.11.0
+----
+
+[TIP]
+====
+If any command fails, revisit the installation section for your OS.
+Both Go and Node.js must be installed before proceeding.
+====
+
+==== Application Access
+
+This guide uses the theme park demo application available at:
+
+----
+https://github.com/zstace1/dup-theme-park-webapp
+----
+
+=== Clone the Repository
+
+[source,console]
+----
+$ git clone https://github.com/zstace1/dup-theme-park-webapp.git
+$ cd dup-theme-park-webapp
+----
+
+=== Choose Your Starting Point
+
+This tutorial has two learning paths:
+
+==== Path 1: Guided Implementation (Recommended for First Time)
+
+Start from a clean slate and build feature flags step-by-step:
+
+[source,console]
+----
+$ git checkout feature-flags-clean
+----
+
+This branch has:
+
+* Basic application working
+* No CloudBees SDK installed
+* No feature flags implemented
+
+You'll add everything following this guide.
+
+==== Path 2: Reference Implementation
+
+View the complete implementation for comparison:
+
+[source,console]
+----
+$ git checkout feature-flags-complete
+----
+
+Use this to:
+
+* Compare your work
+* Troubleshoot issues
+* See the final result
+
+[IMPORTANT]
+====
+For this tutorial, **use Path 1** (feature-flags-clean branch).
+You can switch to feature-flags-complete anytime to compare:
+`git checkout feature-flags-complete`
+====
+
+=== Verify Your Starting Point
+
+Confirm you're on the correct branch:
+
+[source,console]
+----
+$ git branch
+----
+
+**Expected output:**
+----
+* feature-flags-clean
+  main
+----
+
+The `*` indicates your current branch should be `feature-flags-clean`.
+
+**Expected file contents:**
+
+* `backend/main.go` - Simple app, no flag imports
+* `frontend/src/App.jsx` - Basic UI, no flag logic
+
+== CloudBees Unify Configuration
+
+=== Task 1 - Access Installation Instructions
+
+==== Step 1 - Navigate to Feature Management
+
+. Log in to https://cloudbees.io
+. In the left sidebar, click **Feature management**
+. If this is your first time, you'll see "Create your first flag"
+. Click the **Installation instructions** button
+
+[NOTE]
+====
+In the CloudBees Unify UI, you should see the Feature Management section in the left sidebar with the SDK Installation instructions wizard displayed.
+====
+
+You'll see the SDK Installation instructions wizard with multiple steps to guide you through setup.
+
+==== Step 2 - Create an Environment
+
+In the installation wizard:
+
+. **Step 1: Create an environment** will be expanded
+. Click **Create environment** button
+. You'll typically create three environments:
+** **Development** - For local development and testing
+** **Staging** - For pre-production validation
+** **Production** - For live user traffic
+. For this tutorial, create at least the **Development** environment
+. If you already have an environment, you can skip this step
+
+==== Step 3 - Create an Application
+
+. **Step 2: Create an application** will appear next
+. In the Application dropdown, select **an existing application** or click the **Create application** button
+. In the Create Application dialog, fill in:
+** **Application name**: `theme-park-demo`
+** **Description**: Theme park web application for feature flag demonstration
+. In the **Environments** section, click **Add environment**
+. Select the **Development** environment you created in Step 2
+. Click **Create**
+. Select the newly created application from the dropdown
+
+[NOTE]
+====
+You should see the Create Application dialog with the application name, description, and environment fields filled in. The newly created application should appear in the application dropdown.
+====
+
+[IMPORTANT]
+====
+You must add at least one environment to the application. The environment dropdown in Step 3 of the wizard will only show environments linked to your application.
+====
+
+==== Step 4 - Select Environment
+
+. **Step 3: Select an environment** will now show your linked environment
+. From the Environment dropdown, select **Development**
+. This confirms which environment's SDK key you'll use
+
+=== Task 2 - Copy SDK Key from Installation Wizard
+
+The CloudBees installation wizard provides reference steps and code examples. **You'll implement these step-by-step in the Backend Integration section below.** For now, just copy your SDK key.
+
+==== Step 5 - Select SDK Language
+
+. **Step 4: Select an SDK** will expand
+. From the **Language** dropdown, select **Go**
+. From the **Platform** dropdown, select **Get**
+. The wizard displays installation commands in the right panel
+
+==== Step 6 - Review Installation Commands
+
+. **Step 5: Add the ROX package to your application** expands
+. The right panel shows the `go get` command to install the SDK
+. Note this for reference - you'll run it from the correct directory in the Backend Integration section
+
+==== Step 7 - Copy Your SDK Key
+
+. **Step 6: Import the ROX SDK and create flags in your application** expands
+. The right panel shows complete Go integration code
+. Find the line containing `<-rox.Setup("your-key-here", options)`
+. Copy the SDK key (it looks like: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`)
+. Save this key securely - you'll use it as `FM_KEY` in your `.env` file
+
+**Key format:** Typically `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` (UUID format)
+
+[NOTE]
+====
+SDK keys are automatically generated when you link an environment to an application in CloudBees. You don't generate them manually - they're created as part of the environment-application linking process shown in Steps 2-4 above.
+====
+
+[IMPORTANT]
+====
+SDK keys are sensitive credentials. Never commit them to version control.
+====
+
+==== Step 8 - Note Verification Steps
+
+. **Step 7: Run your application and test the integration** expands
+. This shows:
+** Instructions to add the Go package and run/compile your application
+** Note that a default flag is automatically added to your flag list
+** A "Test integration" button to verify SDK connection
+** You'll complete these steps after implementing the integration below
+
+[NOTE]
+====
+The "No SDK connection detected" message is expected at this point since you haven't integrated the SDK yet. This will be resolved when you complete the Backend Integration section.
+====
+
+=== Task 3 - Prepare Environment Files for Local Development
+
+Now that you have your SDK key from the CloudBees wizard, you'll configure your local development environment.
+
+[NOTE]
+====
+The `.env` files configured here are specifically for **local development** on your laptop. In production environments, SDK keys should be managed through your organization's secrets management system (e.g., CloudBees Unify secrets, Kubernetes secrets, AWS Secrets Manager) and injected as environment variables at runtime. Never commit SDK keys directly in application code or configuration files.
+====
+
+==== Step 1 - Create Backend .env File
+
+From the repository root:
+
+[source,console]
+----
+$ pwd
+----
+
+**Expected output:**
+----
+/Users/yourname/dup-theme-park-webapp
+----
+
+Ensure you're in the repository root, then create the backend `.env` file:
+
+[source,console]
+----
+$ cp backend/.env.example backend/.env
+----
+
+**Expected output:**
+----
+(no output means success)
+----
+
+Verify the file was created:
+
+[source,console]
+----
+$ ls -la backend/.env
+----
+
+**Expected output:**
+----
+-rw-r--r--  1 yourname  staff  123 Mar 11 10:30 backend/.env
+----
+
+==== Step 2 - Edit Backend .env File
+
+Edit `backend/.env` and set your CloudBees SDK key from the previous step:
+
+[source,properties]
+----
+PORT=8080
+ALLOWED_ORIGIN=http://localhost:5173
+
+# CloudBees Feature Management API Key
+FM_KEY=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+----
+
+Replace `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` with your actual SDK key (no quotes, no spaces).
+
+[IMPORTANT]
+====
+**Security Note:**
+
+Your SDK key provides access to your CloudBees environment. Protect it by:
+
+* Storing keys in `.env` files (never hard-code in source)
+* Adding `.env` to `.gitignore` to prevent committing to Git
+* Using different keys for each environment (dev/staging/production)
+
+Verify `.env` is not tracked by Git:
+
+[source,console]
+----
+$ git status
+----
+
+You should NOT see `backend/.env` in the list of changes.
+
+If a key is accidentally exposed, regenerate it immediately in the CloudBees UI.
+====
+
+==== Step 3 - Verify .env Configuration
+
+Check that your FM_KEY is set:
+
+[source,console]
+----
+$ grep FM_KEY backend/.env
+----
+
+**Expected output:**
+----
+FM_KEY=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+----
+
+If you see `FM_KEY=` with no value, go back and edit the file.
+
+==== Step 4 - Create Frontend .env File
+
+From the repository root:
+
+[source,console]
+----
+$ pwd
+----
+
+**Expected output:**
+----
+/Users/yourname/dup-theme-park-webapp
+----
+
+Create the frontend `.env` file:
+
+[source,console]
+----
+$ cp frontend/.env.example frontend/.env
+----
+
+The frontend `.env` contains:
+
+[source,properties]
+----
+VITE_API_BASE_URL=http://localhost:8080
+----
+
+This file usually doesn't need editing for local development, but verify it exists:
+
+[source,console]
+----
+$ cat frontend/.env
+----
+
+**Expected output:**
+----
+VITE_API_BASE_URL=http://localhost:8080
+----
+
+[NOTE]
+====
+**You will need two terminal windows** for the rest of this tutorial:
+- **Terminal 1**: Backend server (Go application on port 8080)
+- **Terminal 2**: Frontend server (Vite dev server on port 5173)
+
+Both must stay running simultaneously for the application to work.
+====
+
+== Backend Integration - Go SDK
+
+Now you'll implement the CloudBees SDK integration step-by-step, following the CloudBees wizard instructions.
+
+=== Task 1 - Install Go SDK Dependency
+
+The `feature-flags-clean` branch doesn't have the CloudBees SDK yet. You'll install it following the same steps shown in the CloudBees wizard.
+
+==== Step 1 - Verify Clean State
+
+First, confirm you're on the clean branch:
+
+From the repository root:
+
+[source,console]
+----
+$ pwd
+----
+
+**Expected output:**
+----
+/Users/yourname/dup-theme-park-webapp
+----
+
+[source,console]
+----
+$ git branch
+----
+
+**Expected output:**
+----
+* feature-flags-clean
+  main
+----
+
+Verify the SDK is not yet in go.mod:
+
+[source,console]
+----
+$ grep rox-go backend/go.mod
+----
+
+**Expected output:**
+----
+(no output - SDK not installed yet)
+----
+
+==== Step 2 - Install the SDK
+
+Install the SDK package. This matches **Step 5** from the CloudBees wizard.
+
+From the repository root, navigate to backend:
+
+[source,console]
+----
+$ cd backend
+$ pwd
+----
+
+**Expected output:**
+----
+/Users/yourname/dup-theme-park-webapp/backend
+----
+
+Install the CloudBees SDK:
+
+[source,console]
+----
+$ go get github.com/rollout/rox-go/v5
+----
+
+**Expected output:**
+----
+go: downloading github.com/rollout/rox-go/v5 v5.0.12
+go: added github.com/rollout/rox-go/v5 v5.0.12
+go: added github.com/rollout/sse v0.0.0-20181105093643-e422b54b3b28
+----
+
+You may also see additional lines like:
+----
+go: downloading golang.org/x/net v0.52.0
+go: upgraded golang.org/x/net v0.49.0 => v0.52.0
+----
+
+These indicate Go is downloading or upgrading transitive dependencies, which is normal.
+
+Install godotenv to load `.env` files:
+
+[source,console]
+----
+$ go get github.com/joho/godotenv
+----
+
+**Expected output:**
+----
+go: downloading github.com/joho/godotenv v1.5.1
+go: added github.com/joho/godotenv v1.5.1
+----
+
+==== Step 3 - Verify Installation
+
+Check that both packages are now in go.mod:
+
+[source,console]
+----
+$ grep -E "rox-go|godotenv" go.mod
+----
+
+**Expected output:**
+----
+github.com/joho/godotenv v1.5.1
+github.com/rollout/rox-go/v5 v5.0.12
+----
+
+**Success!** Both the CloudBees SDK and godotenv are now installed.
+
+[NOTE]
+====
+**Don't run `go mod tidy` yet.** If you run it now, godotenv will be removed from go.mod because it's not imported in any Go files yet. You'll add the imports in the next step, and then Go will keep the dependency.
+====
+
+Return to repository root:
+
+[source,console]
+----
+$ cd ..
+$ pwd
+----
+
+**Expected output:**
+----
+/Users/yourname/dup-theme-park-webapp
+----
+
+=== Task 2 - Add Feature Flags and Initialize SDK
+
+Now you'll add the SDK imports and implement feature flags in your application.
+
+==== Step 1 - Add SDK Imports
+
+Edit `backend/main.go`. Find the import section at the top of the file. It currently looks like:
+
+[source,go]
+----
+package main
+
+import (
+	"log"
+	"net/http"
+)
+----
+
+Add the CloudBees SDK and godotenv imports:
+
+[source,go]
+----
+package main
+
+import (
+	"log"
+	"net/http"
+	"os"
+	"time"
+
+	"github.com/joho/godotenv"
+	"github.com/rollout/rox-go/v5/server"
+)
+----
+
+**What we added:**
+* `"os"` - to read environment variables (for FM_KEY)
+* `"time"` - for SDK timeout handling
+* `"github.com/joho/godotenv"` - to load `.env` file
+* `"github.com/rollout/rox-go/v5/server"` - CloudBees SDK
+
+Save the file.
+
+Now that the imports are in your code, tidy up dependencies:
+
+[source,console]
+----
+$ go mod tidy
+----
+
+This ensures go.mod is consistent with your imports. Since godotenv is now imported in `main.go`, it will remain in go.mod.
+
+==== Step 2 - Add Flag Structure
+
+Still in `backend/main.go`, scroll down to find the `func main()` function. You'll add the flag definitions right before it.
+
+Your file currently looks like this:
+
+[source,go]
+----
+import (
+	"log"
+	"net/http"
+	"os"
+	"time"
+
+	"github.com/joho/godotenv"
+	"github.com/rollout/rox-go/v5/server"
+)
+
+func main() {
+    config := LoadConfig()
+    // ... rest of main
+}
+----
+
+Add the flag structure **between the imports and the main() function**:
+
+[source,go]
+----
+import (
+	"log"
+	"net/http"
+	"os"
+	"time"
+
+	"github.com/joho/godotenv"
+	"github.com/rollout/rox-go/v5/server"
+)
+
+type Flags struct {
+    ShowNewEvent   server.RoxFlag
+    EnableVipPass  server.RoxFlag
+    TicketUpsells  server.RoxFlag
+    EnablePromos   server.RoxFlag
+}
+
+var flags = &Flags{
+    ShowNewEvent:   server.NewRoxFlag(false),
+    EnableVipPass:  server.NewRoxFlag(false),
+    TicketUpsells:  server.NewRoxFlag(true),
+    EnablePromos:   server.NewRoxFlag(true),
+}
+
+func main() {
+    config := LoadConfig()
+    // ... rest of main
+}
+----
+
+**What this code does:**
+
+* `type Flags struct` - Defines a container for all your feature flags
+* `server.RoxFlag` - CloudBees boolean feature flag type
+* `server.NewRoxFlag(defaultValue)` - Creates a flag with a fallback value
+* Default values are used if CloudBees connection fails or times out
+
+Save the file.
+
+==== Step 3 - Add SDK Initialization Code
+
+Now modify the `main()` function to initialize the CloudBees SDK at startup.
+
+Find the existing `main()` function in `backend/main.go`. It currently looks like:
+
+[source,go]
+----
+func main() {
+    config := LoadConfig()
+
+    app := NewApp(config)
+
+    server := &http.Server{
+        Addr:    ":" + config.Port,
+        Handler: withCORS(config.AllowedOrigin, app.routes()),
+    }
+
+    log.Printf("Theme Park API listening on %s", server.Addr)
+    log.Printf("API endpoints: /api/health, /api/events, /api/promotions, /api/tickets/purchase")
+    if err := server.ListenAndServe(); err != nil {
+        log.Fatal(err)
+    }
+}
+----
+
+Replace it with:
+
+[source,go]
+----
+func main() {
+    // Load .env file for local development
+    _ = godotenv.Load()
+
+    config := LoadConfig()
+
+    // Initialize CloudBees SDK with impression handler
+    options := server.NewRoxOptions(server.RoxOptionsBuilder{
+        ImpressionHandler: func(e server.ImpressionArgs) {
+            // Log impression data for debugging
+            log.Printf("Impression: flag=%s, value=%v", e.ReportingValue.Name, e.ReportingValue.Value)
+            // In production, you could send this to analytics or monitoring tools
+        },
+    })
+    rox := server.NewRox()
+
+    rox.RegisterWithEmptyNamespace(flags)
+
+    log.Println("Initializing Feature Flags...")
+    select {
+    case <-rox.Setup(os.Getenv("FM_KEY"), options):
+        log.Println("Feature Flags initialized successfully")
+    case <-time.After(5 * time.Second):
+        log.Println("Warning: Feature Flags timed out, using defaults")
+    }
+
+    app := NewApp(config, flags)
+
+    server := &http.Server{
+        Addr:              ":" + config.Port,
+        Handler:           withCORS(config.AllowedOrigin, app.routes()),
+        ReadHeaderTimeout: 5 * time.Second,
+    }
+
+    log.Printf("Theme Park API listening on %s", server.Addr)
+    log.Printf("API endpoints: /api/health, /api/flags, /api/events, /api/promotions, /api/tickets/purchase, /api/reviews")
+    if err := server.ListenAndServe(); err != nil {
+        log.Fatal(err)
+    }
+}
+----
+
+**What we added:**
+
+* `_ = godotenv.Load()` - Loads environment variables from `backend/.env` file
+** The `_` ignores errors (file may not exist in production environments)
+** Must be called **before** `LoadConfig()` or `os.Getenv("FM_KEY")`
+** Reads your `FM_KEY` from `.env` and makes it available to `os.Getenv()`
+* `server.NewRoxOptions()` - Creates SDK configuration
+** `ImpressionHandler` - **Required for impression tracking in CloudBees dashboard**
+** By default, the SDK does not automatically report impression data
+** The handler is called every time a flag is evaluated
+** Logs flag name and value for debugging
+** In production, you can send this data to analytics or monitoring tools
+* `server.NewRox()` - Creates SDK client
+* `rox.RegisterWithEmptyNamespace(flags)` - Registers your flags with CloudBees
+* `rox.Setup(os.Getenv("FM_KEY"), options)` - Connects to CloudBees using your SDK key from `.env`
+
+[IMPORTANT]
+====
+**Impression Handler is Required for Dashboard Metrics**
+
+Without the `ImpressionHandler`, the CloudBees dashboard will not show impression data (total impressions, unique users, variation distribution). The SDK does not automatically send this data - you must explicitly configure the handler to enable impression tracking in the Feature Management dashboard.
+====
+* `select` statement with timeout - Waits up to 5 seconds for connection
+* `app := NewApp(config, flags)` - Passes flags to your application (note: we added `flags` parameter)
+
+[IMPORTANT]
+====
+The `godotenv.Load()` call is **critical** for local development. Without it, Go cannot read the `.env` file and `FM_KEY` will be empty, causing the SDK connection to fail with "Invalid rollout apikey" error.
+====
+
+Save the file.
+
+==== Step 4 - Update App Struct and Constructor
+
+The `App` struct needs a `flags` field, and `NewApp()` needs to accept the flags parameter. Open `backend/handlers.go` and find:
+
+[source,go]
+----
+type App struct {
+    config Config
+}
+
+func NewApp(config Config) *App {
+    return &App{
+        config: config,
+    }
+}
+----
+
+Replace with:
+
+[source,go]
+----
+type App struct {
+    config Config
+    flags  *Flags
+}
+
+func NewApp(config Config, flags *Flags) *App {
+    return &App{
+        config: config,
+        flags:  flags,
+    }
+}
+----
+
+**What changed:**
+1. Added `flags *Flags` field to the `App` struct
+2. Added `flags *Flags` parameter to `NewApp()` function
+3. Set `flags: flags` in the return statement
+
+Save the file.
+
+==== Step 5 - Test Build
+
+Now verify everything compiles correctly. From the repository root, navigate to backend:
+
+[source,console]
+----
+$ cd backend
+$ pwd
+----
+
+**Expected output:**
+----
+/Users/yourname/dup-theme-park-webapp/backend
+----
+
+Build the application:
+
+[source,console]
+----
+$ go build
+----
+
+**Expected output:**
+----
+(no output means success)
+----
+
+**Success!** No output means the code compiled successfully.
+
+Check that the binary was created:
+
+[source,console]
+----
+$ ls -lh themepark-demo
+----
+
+**Expected output:**
+----
+-rwxr-xr-x  1 yourname  staff   9.3M Mar 12 11:00 themepark-demo
+----
+
+The binary is named `themepark-demo` (from the module name in `go.mod`).
+
+[TIP]
+====
+If you get compile errors:
+* `undefined: server` → Check your imports in main.go
+* `cannot find package` → Rerun `go mod download`
+* Compare with the complete branch: `git diff feature-flags-complete backend/main.go`
+====
+
+Return to repository root:
+
+[source,console]
+----
+$ cd ..
+$ pwd
+----
+
+**Expected output:**
+----
+/Users/yourname/dup-theme-park-webapp
+----
+
+=== Checkpoint: Feature Flags Implementation Complete
+
+Before proceeding, verify:
+
+- [x] Go SDK dependency added to go.mod
+- [x] SDK imports added to main.go
+- [x] Flags struct defined
+- [x] SDK initialization code added to main()
+- [x] App constructor updated to accept flags
+- [x] Code compiles without errors
+- [x] You're back in repository root directory
+
+If any item is unchecked, review the previous steps.
+
+==== Step 6 - Test Backend Startup
+
+Now let's run the backend server. From the repository root:
+
+[source,console]
+----
+$ cd backend
+$ go run .
+----
+
+**Expected output:**
+----
+Initializing Feature Flags...
+Feature Flags initialized successfully
+Theme Park API listening on :8080
+API endpoints: /api/health, /api/events, /api/promotions, /api/tickets/purchase
+----
+
+You may also see DEBUG messages about CDN fallback:
+----
+DEBUG:  Failed to fetch from CDN. Trying from API. http error code: 200
+DEBUG:  Failed to send state to CDN. Trying from API. http error code: 200
+----
+
+These are normal - the SDK tries the CDN first for performance, then falls back to the API. This doesn't indicate a problem.
+
+**Success indicators:**
+
+* ✓ "Feature Flags initialized successfully" appears
+* ✓ Server is listening on port 8080
+* ✓ Application stays running (doesn't exit)
+* ✓ DEBUG messages (if any) are followed by "initialized successfully"
+
+**Common errors:**
+
+**Error: "ERROR: Failed in Rox.Setup Invalid rollout apikey"**
+
+Cause: FM_KEY is empty or not being loaded from `.env` file
+
+Solutions:
+[source,console]
+----
+# 1. Verify FM_KEY is in backend/.env
+$ grep FM_KEY backend/.env
+
+# Expected: FM_KEY=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+# If empty, edit backend/.env and add your key
+
+# 2. Verify godotenv.Load() is in main.go
+$ grep -A 2 "func main()" backend/main.go
+
+# Expected to see:
+# func main() {
+#     _ = godotenv.Load()
+#     config := LoadConfig()
+
+# 3. If godotenv is missing, add it to imports and main():
+# See Task 2, Step 1 and Step 3 for full instructions
+----
+
+**Error: "Feature Flags timed out, using defaults"**
+
+Cause: Network connectivity issues or firewall blocking CloudBees
+
+Solutions:
+[source,console]
+----
+# 1. Test internet connection
+$ curl -I https://app.cloudbees.io
+
+# Expected: HTTP/2 200
+
+# 2. Verify no extra whitespace in FM_KEY
+# Wrong: FM_KEY= xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+# Right: FM_KEY=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+----
+
+**Error: "bind: address already in use"**
+
+Cause: Port 8080 already in use
+
+Solutions:
+[source,console]
+----
+# Find what's using port 8080
+$ lsof -i :8080
+
+# Kill the process (replace <PID> with actual process ID)
+$ kill -9 <PID>
+
+# Try again
+$ go run .
+----
+
+**Error: "cannot find package"**
+
+Cause: Dependencies not downloaded
+
+Solutions:
+[source,console]
+----
+$ go mod download
+$ go mod tidy
+$ go run .
+----
+
+**Error: "undefined: flags" or "undefined: server"**
+
+Cause: Code doesn't match the tutorial
+
+Solutions:
+[source,console]
+----
+# Compare with complete branch
+$ git diff feature-flags-complete backend/main.go
+
+# Review the differences and update your code
+----
+
+==== Step 7 - Test Basic API
+
+Leave the backend running. Open a **new terminal window** and test the health endpoint:
+
+[source,console]
+----
+$ curl http://localhost:8080/api/health
+----
+
+**Expected output:**
+----
+{"status":"ok","timestamp":"2026-03-12T10:30:00Z"}
+----
+
+**Success!** Your backend is running with feature flags initialized.
+
+[NOTE]
+====
+You can stop the server with `Ctrl+C` for now. We'll add the `/api/flags` endpoint in the next task.
+====
+
+=== Task 3 - Add Flag Evaluation Endpoints
+
+Now you'll add handlers that evaluate and expose your feature flags.
+
+==== Step 1 - Add handleFlags Function
+
+Open `backend/handlers.go` and add the following function at the end of the file (before the `writeJSON` helper functions):
+
+[source,go]
+----
+func (app *App) handleFlags(w http.ResponseWriter, r *http.Request) {
+    if r.Method != http.MethodGet {
+        writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+        return
+    }
+
+    // Retrieve user email for targeting
+    email := r.URL.Query().Get("email")
+
+    // Create context with user properties
+    roxContext := context.NewContext(map[string]interface{}{
+        "email": email,  // Must match custom property in CloudBees
+    })
+
+    // Evaluate flags with context
+    currentFlags := map[string]bool{
+        "showNewEvent":        app.flags.ShowNewEvent.IsEnabled(roxContext),
+        "enableVipPass":       app.flags.EnableVipPass.IsEnabled(roxContext),
+        "enableTicketUpsells": app.flags.TicketUpsells.IsEnabled(roxContext),
+        "enablePromos":        app.flags.EnablePromos.IsEnabled(roxContext),
+    }
+
+    writeJSON(w, http.StatusOK, currentFlags)
+}
+----
+
+**What this code does:**
+
+* Accepts GET requests with optional `email` query parameter
+* Creates a CloudBees context with user properties for targeted flag evaluation
+* Evaluates all 4 flags and returns their boolean values as JSON
+* Context enables CloudBees to apply targeting rules and percentage rollouts
+
+Save the file.
+
+==== Step 2 - Add context Import
+
+The `handleFlags` function uses `context.NewContext()` from the CloudBees SDK. Add this import to `backend/handlers.go`.
+
+Find the imports at the top:
+
+[source,go]
+----
+import (
+	"encoding/json"
+	"net/http"
+	"strings"
+	"time"
+)
+----
+
+Add the context import:
+
+[source,go]
+----
+import (
+	"encoding/json"
+	"net/http"
+	"strings"
+	"time"
+
+	"github.com/rollout/rox-go/v5/core/context"
+)
+----
+
+Save the file.
+
+==== Step 3 - Register the Route
+
+In `backend/handlers.go`, find the `routes()` function:
+
+[source,go]
+----
+func (app *App) routes() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/health", app.handleHealth)
+	mux.HandleFunc("/api/events", app.handleEvents)
+	mux.HandleFunc("/api/promotions", app.handlePromotions)
+	mux.HandleFunc("/api/tickets/purchase", app.handlePurchase)
+	return mux
+}
+----
+
+Add the flags route:
+
+[source,go]
+----
+func (app *App) routes() *http.ServeMux {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/health", app.handleHealth)
+	mux.HandleFunc("/api/flags", app.handleFlags)
+	mux.HandleFunc("/api/events", app.handleEvents)
+	mux.HandleFunc("/api/promotions", app.handlePromotions)
+	mux.HandleFunc("/api/tickets/purchase", app.handlePurchase)
+	return mux
+}
+----
+
+Save the file.
+
+==== Step 4 - Test the Flags Endpoint
+
+Start the backend server:
+
+[source,console]
+----
+$ cd backend
+$ go run .
+----
+
+**Expected output:**
+----
+Initializing Feature Flags...
+Feature Flags initialized successfully
+Theme Park API listening on :8080
+API endpoints: /api/health, /api/flags, /api/events, /api/promotions, /api/tickets/purchase
+----
+
+In a new terminal, test the flags endpoint:
+
+[source,console]
+----
+$ curl http://localhost:8080/api/flags
+----
+
+**Expected output:**
+----
+{"enablePromos":true,"enableTicketUpsells":true,"enableVipPass":false,"showNewEvent":false}
+----
+
+The JSON is minified (all on one line). For easier reading, you can pipe to `jq`:
+
+[source,console]
+----
+$ curl -s http://localhost:8080/api/flags | jq
+----
+
+**Expected output (with jq):**
+----
+{
+  "enablePromos": true,
+  "enableTicketUpsells": true,
+  "enableVipPass": false,
+  "showNewEvent": false
+}
+----
+
+**Success!** Your backend is now returning feature flag values.
+
+Test with a user email:
+
+[source,console]
+----
+$ curl "http://localhost:8080/api/flags?email=test@example.com"
+----
+
+The values will be the same for now, but once you configure targeting rules in CloudBees, different users will receive different flag values.
+
+==== Step 5 - Add Conditional Event Logic
+
+Now you'll use the `ShowNewEvent` flag to conditionally show an event in the Events API.
+
+Open `backend/handlers.go` and find the `handleEvents` function.
+
+**Replace the entire `handleEvents` function** with this updated version that includes conditional logic:
+
+[source,go]
+----
+func (app *App) handleEvents(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	// Get user context for flag evaluation
+	email := r.URL.Query().Get("email")
+	roxContext := context.NewContext(map[string]interface{}{
+		"email": email,  // Must match custom property in CloudBees
+	})
+
+	events := []Event{
+		{
+			ID:          "sunrise-carousel",
+			Name:        "Sunrise Carousel",
+			Date:        "Daily",
+			Description: "Start your morning with a golden ride and live brass band.",
+		},
+		{
+			ID:          "riverboat-spectacle",
+			Name:        "Riverboat Spectacle",
+			Date:        "Weekends",
+			Description: "A floating stage show with acrobats and water cannons.",
+		},
+		{
+			ID:          "skyline-fireworks",
+			Name:        "Skyline Fireworks",
+			Date:        "Nightly",
+			Description: "Fireworks with synchronized drones and lasers.",
+		},
+	}
+
+	// Add conditional event based on flag with user context
+	if app.flags.ShowNewEvent.IsEnabled(roxContext) {
+		events = append(events, Event{
+			ID:          "after-dark-parade",
+			Name:        "After Dark Parade",
+			Date:        "Friday nights",
+			Description: "Neon floats and midnight DJs under the stars.",
+		})
+	}
+
+	writeJSON(w, http.StatusOK, events)
+}
+----
+
+**What this does:**
+
+* Retrieves the `email` query parameter from the request
+* Creates a `roxContext` with the user's email as the identifier
+* First, the `events` slice is created with 3 hardcoded events
+* Then checks if `ShowNewEvent` flag is enabled **for this specific user**
+* If true, uses `append()` to add the "After Dark Parade" event to the list
+* If false, event list remains unchanged (only 3 events)
+* **Important**: Passing `roxContext` (not `nil`) enables percentage rollouts and user targeting to work correctly with "sticky" behavior
+
+Save the file.
+
+==== Step 6 - Test the Conditional Logic
+
+Restart your backend to pick up the changes:
+
+[source,console]
+----
+# In Terminal 1 (backend)
+# Press Ctrl+C to stop
+$ go run .
+----
+
+Test the events endpoint:
+
+[source,console]
+----
+$ curl http://localhost:8080/api/events
+----
+
+**Expected output:**
+
+You should see 3 events (no After Dark Parade yet, because the flag defaults to false):
+
+[source,json]
+----
+[{"id":"sunrise-carousel","name":"Sunrise Carousel","date":"Daily","description":"Start your morning with a golden ride and live brass band."},{"id":"riverboat-spectacle","name":"Riverboat Spectacle","date":"Weekends","description":"A floating stage show with acrobats and water cannons."},{"id":"skyline-fireworks","name":"Skyline Fireworks","date":"Nightly","description":"Fireworks with synchronized drones and lasers."}]
+----
+
+For easier reading, pipe to `jq`:
+
+[source,console]
+----
+$ curl -s http://localhost:8080/api/events | jq
+----
+
+The event list is being controlled by the flag! Once you set `ShowNewEvent` to true in CloudBees, the 4th event will appear.
+
+[TIP]
+====
+Keep the backend server running. You'll need it for the frontend integration in the next section.
+====
+
+== Frontend Integration
+
+=== Task 1 - Review Frontend Architecture
+
+The frontend uses a **proxy pattern** - no separate SDK is installed. Instead, the backend SDK evaluates all flags and exposes them via the `/api/flags` endpoint.
+
+**Architecture Benefits:**
+
+* **Single SDK connection** - Only the backend connects to CloudBees (simpler, more efficient)
+* **Consistent flag evaluation** - All flags evaluated server-side with full context
+* **Simplified frontend code** - Just fetch JSON, no SDK initialization
+* **Better performance** - Single API call gets all flags at once
+
+=== Task 2 - Start the Frontend Server
+
+Before making code changes, start the frontend development server.
+
+Open a **new terminal window** (keep the backend running in Terminal 1):
+
+[source,console]
+----
+# Terminal 2 (frontend)
+$ cd frontend
+$ npm install
+$ npm run dev
+----
+
+**Expected output:**
+----
+  VITE v4.x.x  ready in xxx ms
+
+  ➜  Local:   http://localhost:5173/
+  ➜  Network: use --host to expose
+  ➜  press h to show help
+----
+
+Open your browser to http://localhost:5173/
+
+You should see the theme park website with:
+* Upcoming events section
+* Promotions section
+* Ticket purchase button
+
+[TIP]
+====
+Keep both servers running during frontend development. The frontend dev server provides hot-reload - code changes will automatically refresh the browser.
+====
+
+=== Task 3 - Flag API Integration
+
+==== Step 1 - Add getFlags Function
+
+Open `frontend/src/api.js`. The file currently has functions for events, promotions, and tickets:
+
+[source,javascript]
+----
+export async function getEvents() {
+  return fetchJSON(`${API_BASE}/api/events`);
+}
+
+export async function getPromotions(segment) {
+  const query = segment ? `?segment=${encodeURIComponent(segment)}` : '';
+  return fetchJSON(`${API_BASE}/api/promotions${query}`);
+}
+
+export async function purchaseTickets(payload) {
+  return fetchJSON(`${API_BASE}/api/tickets/purchase`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  });
+}
+----
+
+Add a new `getFlags` function at the top, right after the `fetchJSON` helper:
+
+[source,javascript]
+----
+// Fetch flags from backend
+export async function getFlags(email) {
+  const query = email ? `?email=${encodeURIComponent(email)}` : '';
+  return fetchJSON(`${API_BASE}/api/flags${query}`);
+}
+
+export async function getEvents() {
+  return fetchJSON(`${API_BASE}/api/events`);
+}
+
+export async function getPromotions(segment) {
+  const query = segment ? `?segment=${encodeURIComponent(segment)}` : '';
+  return fetchJSON(`${API_BASE}/api/promotions${query}`);
+}
+// ... rest of the functions
+----
+
+**What this function does:**
+* Accepts an optional `email` parameter for user-specific flag evaluation
+* Calls the `/api/flags` endpoint you created in the backend
+* Returns the flag values as a JavaScript object
+
+Save the file.
+
+==== Step 2 - Add Flag State to React Component
+
+Open `frontend/src/App.jsx`. You'll add flag loading to the existing data fetching logic.
+
+First, import the `getFlags` function. Find the imports at the top:
+
+[source,javascript]
+----
+import { useEffect, useState } from 'react';
+import { getEvents, getPromotions, purchaseTickets } from './api.js';
+----
+
+Add `getFlags` to the import:
+
+[source,javascript]
+----
+import { useEffect, useState } from 'react';
+import { getEvents, getFlags, getPromotions, purchaseTickets } from './api.js';
+----
+
+Save the file.
+
+==== Step 3 - Add Flags State
+
+In the same `App.jsx` file, find the state declarations:
+
+[source,javascript]
+----
+export default function App() {
+  // Data state
+  const [events, setEvents] = useState([]);
+  const [promotions, setPromotions] = useState([]);
+
+  // UI state
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+  // ... more state
+----
+
+Add a new state variable for flags:
+
+[source,javascript]
+----
+export default function App() {
+  // Data state
+  const [events, setEvents] = useState([]);
+  const [promotions, setPromotions] = useState([]);
+  const [flags, setFlags] = useState(null);
+
+  // UI state
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(true);
+  // ... more state
+----
+
+Save the file.
+
+==== Step 4 - Load Flags on Mount
+
+Find the `useEffect` hook that loads data. It currently looks like:
+
+[source,javascript]
+----
+useEffect(() => {
+  let alive = true;
+  const userSegment = 'vip';
+
+  async function load() {
+    try {
+      const [eventData, promoData] = await Promise.all([
+        getEvents(),
+        getPromotions(userSegment)
+      ]);
+      if (!alive) return;
+      setEvents(eventData);
+      setPromotions(promoData);
+    } catch (err) {
+      if (!alive) return;
+      setError(err.message || 'Unable to load theme park data.');
+    } finally {
+      if (!alive) return;
+      setLoading(false);
+    }
+  }
+  load();
+  return () => {
+    alive = false;
+  };
+}, []);
+----
+
+Update the `Promise.all` call to include `getFlags()`:
+
+. Add `flagData` to the destructuring array
+. Add `getFlags()` as the first call in the `Promise.all` array
+. Add `setFlags(flagData)` after the alive check
+
+[source,javascript]
+----
+useEffect(() => {
+  let alive = true;
+  const userSegment = 'vip';
+
+  async function load() {
+    try {
+      const [flagData, eventData, promoData] = await Promise.all([
+        getFlags(),
+        getEvents(),
+        getPromotions(userSegment)
+      ]);
+      if (!alive) return;
+      setFlags(flagData);
+      setEvents(eventData);
+      setPromotions(promoData);
+    } catch (err) {
+      if (!alive) return;
+      setError(err.message || 'Unable to load theme park data.');
+    } finally {
+      if (!alive) return;
+      setLoading(false);
+    }
+  }
+  load();
+  return () => {
+    alive = false;
+  };
+}, []);
+----
+
+Save the file.
+
+==== Step 5 - Add Console Log to Verify Flags
+
+To verify flags are loading correctly, add a temporary console.log in the useEffect.
+
+Find this line in your `App.jsx`:
+
+[source,javascript]
+----
+setFlags(flagData);
+setEvents(eventData);
+setPromotions(promoData);
+----
+
+Add a console.log right after `setFlags`:
+
+[source,javascript]
+----
+setFlags(flagData);
+console.log('Flags loaded:', flagData);  // Add this line
+setEvents(eventData);
+setPromotions(promoData);
+----
+
+Save the file. The browser should auto-reload.
+
+[NOTE]
+====
+Verify both servers are still running:
+
+* **Terminal 1**: Backend should show "Theme Park API listening on :8080"
+* **Terminal 2**: Frontend should show "Local: http://localhost:5173"
+
+If either stopped, restart them with `go run .` (backend) or `npm run dev` (frontend).
+====
+
+Open http://localhost:5173 in your browser if not already open.
+
+Open the browser developer tools (F12 or Cmd+Option+I on Mac).
+
+[TIP]
+====
+The developer tools may open at the **Network** tab by default. Look for the **Console** tab at the top of the developer tools panel and click it to switch views. On some browsers, the Console may appear as a separate panel at the bottom.
+====
+
+In the Console tab, you should see:
+
+[source,console]
+----
+Flags loaded: Object { showNewEvent: false, enableVipPass: false, enableTicketUpsells: true, enablePromos: true }
+----
+
+[NOTE]
+====
+The flags appear as an expandable object in the console. You can click the arrow/triangle next to "Object" to expand and inspect the individual flag values if needed.
+====
+
+This confirms flags are loading from the backend!
+
+=== Task 4 - Understand Event Rendering Flow
+
+The frontend will automatically show/hide the "After Dark Parade" event based on the API response. Let's understand how this works before configuring the flag in CloudBees.
+
+==== Step 1 - Check Current Events Display
+
+Look at your browser (http://localhost:5173). In the **Upcoming events** section, you should currently see 3 events:
+
+1. Sunrise Carousel - Daily
+2. Riverboat Spectacle - Weekends
+3. Skyline Fireworks - Nightly
+
+**No "After Dark Parade" event yet** because `ShowNewEvent` is currently false (default value).
+
+==== Step 2 - Understand the Rendering Flow
+
+Your `App.jsx` already renders events dynamically:
+
+[source,javascript]
+----
+{events.map((eventItem) => (
+  <article key={eventItem.id} className="event-card">
+    <div>
+      <p className="event-name">{eventItem.name}</p>
+      <p className="event-date">{eventItem.date}</p>
+      <p className="event-desc">{eventItem.description}</p>
+    </div>
+    <button className="ghost">Add reminder</button>
+  </article>
+))}
+----
+
+This code:
+
+* Receives events from backend API (`getEvents()`)
+* Renders whatever events the backend returns
+* No frontend conditional logic needed!
+
+**The magic:** When you enable `ShowNewEvent` in CloudBees (which you'll do in the next section):
+
+1. Backend SDK gets `ShowNewEvent = true`
+
+2. Backend `handleEvents` adds 4th event to array
+
+3. Frontend API call receives 4 events instead of 3
+
+4. Frontend automatically renders all 4 events
+
+**No frontend code changes needed for this flag!** The conditional logic is entirely on the backend.
+
+=== Task 5 - Verify Setup Before CloudBees Configuration
+
+Your local application is now integrated with the CloudBees SDK and ready to respond to flag changes from the CloudBees platform.
+
+**Current state:**
+
+* Backend is connected to CloudBees (using your SDK key)
+* Frontend is fetching flags from the backend `/api/flags` endpoint
+* Application is using default flag values (set in code)
+* Both servers should still be running from previous steps
+
+**What's next:**
+
+You'll create and configure flags in the CloudBees UI. Once configured, the backend SDK will fetch the updated flag values from CloudBees, and your application behavior will change accordingly.
+
+[TIP]
+====
+If you need to verify your setup is working:
+
+* Check backend logs in Terminal 1 for "Feature Flags initialized successfully"
+* Visit http://localhost:5173 in your browser
+* Open browser console (F12) and check for "Flags loaded: Object { ... }"
+* Both servers must remain running for the rest of the tutorial
+====
+
+=== Checkpoint: Ready for CloudBees Configuration
+
+Your application now has:
+
+- [x] CloudBees SDK integrated in both backend and frontend
+- [x] SDK initialized and connected to CloudBees platform
+- [x] Flag definitions in code with default values
+- [x] Backend and frontend communicating via `/api/flags` endpoint
+
+**Next step:** Configure flags in CloudBees UI to control application behavior dynamically.
+
+== Creating Feature Flags in CloudBees Unify
+
+Now you'll create flags in CloudBees Unify and verify they control your application's behavior.
+
+**Strategy:** Create one flag first, test it end-to-end, then create the remaining flags.
+
+[NOTE]
+====
+**Automatic Flag Creation:** When your application connects to CloudBees with flags defined in the application code, the SDK automatically creates those flags in the platform if they don't already exist. You may have noticed flags like `ShowNewEvent`, `EnableVipPass`, etc. already appearing in your CloudBees dashboard after running `go run .`
+
+While the flags are auto-created, they still need to be **configured** (setting default values, targeting rules, etc.) to control application behavior. This section walks through creating and configuring flags to ensure you understand the full process.
+====
+
+=== Task 1 - Create and Test ShowNewEvent Flag
+
+You'll create the `ShowNewEvent` flag and immediately verify it controls the "After Dark Parade" event visibility. If the flags already exist, review the creation steps and move on to Step 2.
+
+==== Step 1 - Create "Show New Event" Flag
+
+. Navigate to **Feature management > Flags**
+. Click **Create flag**
+. Enter flag details:
++
+[cols="1,3"]
+|===
+|Field |Value
+
+|Name
+|`ShowNewEvent`
+
+|Description
+|Controls visibility of the After Dark Parade event
+
+|Type
+|Boolean
+|===
+
+. Click **Save**
+
+After saving, you'll be returned to the flags list page where you'll see your new flag.
+
+[IMPORTANT]
+====
+The flag **Name** must exactly match the flag name in your code. The SDK uses this name to identify flags.
+
+In your code: `ShowNewEvent`
+In CloudBees UI: `ShowNewEvent` (exact match, including capitalization)
+====
+
+==== Step 2 - Configure Flag for Development Environment
+
+Now you'll configure the flag to return `true` in the Development environment.
+
+. From the flags list page, click on the flag name **ShowNewEvent** (or click the 3 dots menu → **Configure**)
+. You'll see the **Flag configuration** page
+. Ensure **Development** is selected in the Environment dropdown (top left)
+. In the **Set to** dropdown, select **True**
+. Toggle the switch on the right to **On**
+. Click **Save configuration** at the top right
+
+[NOTE]
+====
+You should see the flag configuration page for ShowNewEvent with the Development environment selected, the "Set to" dropdown showing True, and the toggle switch set to On.
+
+The "Set to" dropdown has other options (Split for percentage rollouts, Scheduled for time-based changes) which you'll explore in later sections.
+====
+
+==== Step 3 - Wait for Flag Sync
+
+The CloudBees SDK needs to fetch the new flag configuration.
+
+**Option A: Wait for SSE notification (typically instant)**
+
+If the SDK is connected and SSE is working, the flag should update within seconds of your UI change. No action needed—just wait a moment and proceed to the next step.
+
+**Option B: Wait for periodic polling (up to 60 seconds)**
+
+If SSE notification doesn't occur (rare), the SDK will fetch updates on its next poll interval (up to 60 seconds).
+
+**Option C: Restart backend (guaranteed immediate)**
+
+Restarting forces an immediate configuration fetch:
+
+In Terminal 1 (backend), press `Ctrl+C` to stop, then restart:
+
+[source,console]
+----
+$ go run .
+----
+
+**Expected output:**
+----
+Initializing Feature Flags...
+Feature Flags initialized successfully
+Theme Park API listening on :8080
+----
+
+**How flag updates work:**
+
+CloudBees uses a stateless architecture where the SDK pulls configuration from cloud storage. CloudBees Feature Management uses **Server-Sent Events (SSE)** to notify SDKs when configuration changes occur. When you change a flag in the UI:
+
+1. CloudBees sends an instant SSE notification to connected SDKs
+
+2. The SDK fetches the updated configuration
+
+3. The new flag values are applied immediately
+
+As a backup, the Go SDK also polls for updates every **60 seconds** by default (minimum 30 seconds).
+
+==== Step 4 - Verify Flag Value in Console
+
+Refresh your browser (`Cmd+R` or `F5`).
+
+Open browser console (F12) and check the console.log output:
+
+----
+Flags loaded: {
+  showNewEvent: true,        ← Should be true now!
+  enableVipPass: false,
+  enableTicketUpsells: true,
+  enablePromos: true
+}
+----
+
+`showNewEvent` is now `true`!
+
+==== Step 5 - Verify UI Change
+
+This is the moment of truth! Scroll to the **Upcoming events** section.
+
+You should now see **4 events**:
+
+1. Sunrise Carousel - Daily
+2. Riverboat Spectacle - Weekends
+3. Skyline Fireworks - Nightly
+4. **After Dark Parade - Friday nights** ← NEW!
+
+**Success!** The flag is controlling your UI!
+
+==== Step 6 - Test Toggle Behavior
+
+Let's verify you can toggle the flag on/off:
+
+**Disable the flag:**
+
+. Go back to the **Flags** page
+. Click **ShowNewEvent** flag
+. Toggle the switch to **Off** (toggling the switch doesn't require saving the configuration)
+. Wait a few seconds for the flag to update (SSE notification is typically instant)
+. Refresh browser
+
+**Result:** After Dark Parade should disappear! Only 3 events visible.
+
+**Re-enable the flag:**
+
+. Toggle **ShowNewEvent** back to **On**
+. Wait a few seconds for the flag to update (SSE notification is typically instant)
+. Refresh browser
+
+**Result:** After Dark Parade reappears!
+
+**Success!** You've verified complete end-to-end flag control:
+
+* Flag created in CloudBees
+* SDK syncs flag value to backend
+* Backend conditionally includes event based on flag
+* Frontend displays event when present
+* Toggling flag on/off controls UI
+
+[IMPORTANT]
+====
+**You've proven the integration works!** Now you can confidently create the remaining flags.
+====
+
+=== Task 2 - Create Remaining Flags
+
+Now that you've verified the flow works, create the other flags.
+
+[NOTE]
+====
+**If flags already exist:** You may notice that `EnableVipPass`, `TicketUpsells`, and `EnablePromos` already appear in your CloudBees dashboard due to automatic flag creation. If so, you can skip directly to **Step 2 - Verify All Flags** below. However, you'll still need to **configure** each flag to set the correct default values for the Development environment.
+====
+
+==== Step 1 - Create Additional Flags
+
+Repeat the flag creation process (Create → Configure → Save) for these flags:
+
+[cols="2,4,2",options="header"]
+|===
+|Flag Name
+|Description
+|Set to (Dev)
+
+|`EnableVipPass`
+|Show VIP pass purchase option
+|**False**
+
+|`TicketUpsells`
+|Display ticket bundle upsell offers
+|**True**
+
+|`EnablePromos`
+|Show promotional offers panel
+|**True**
+|===
+
+**For each flag:**
+
+1. Click **Create flag** (or skip to step 4 if flag already exists)
+2. Enter Name, Description, Type=Boolean
+3. Click **Save**
+4. Click the flag name from the list
+5. Ensure **Development** environment selected
+6. Set **Set to** dropdown to the value shown above
+7. Toggle switch to **On**
+8. Click **Save configuration**
+
+==== Step 2 - Verify All Flags
+
+After creating all flags, wait a few seconds for the flags to update (SSE notification is typically instant), then refresh browser.
+
+Check console.log output:
+
+* ✓ ShowNewEvent shows "Enabled"
+* ✓ TicketUpsells shows "Enabled"
+* ✓ EnablePromos shows "Enabled"
+* ✓ Other flags show "Disabled"
+
+==== Step 3 - Verify Flag Values Update
+
+Now verify that flag values from CloudBees are syncing to your application.
+
+**Test via browser console:**
+
+. Open browser console (F12)
+. Refresh the page
+. Look for the console.log output: `Flags loaded: {...}`
+. You should see `showNewEvent: true` (since you set it to True in CloudBees)
+
+**Expected output:**
+----
+Flags loaded: {
+  showNewEvent: true,        ← This should be true now!
+  enableVipPass: false,
+  enableTicketUpsells: true,
+  enablePromos: true
+}
+----
+
+**Test via backend API:**
+
+You can also verify by calling the backend directly:
+
+[source,console]
+----
+$ curl http://localhost:8080/api/flags
+----
+
+**Expected output:**
+----
+{"enablePromos":true,"enableTicketUpsells":true,"enableVipPass":false,"showNewEvent":true}
+----
+
+Note that `showNewEvent` is now `true` because you enabled it in CloudBees.
+
+**Success!** CloudBees flag values are syncing to your application.
+
+[IMPORTANT]
+====
+**Troubleshooting flag sync issues:**
+
+**Flags not updating:**
+[source,console]
+----
+# Check backend logs for errors
+$ cd backend
+$ go run .
+
+# Look for:
+"Feature Flags initialized successfully"
+"Feature Flags timed out"
+----
+
+**Wrong flag values:**
+[source,console]
+----
+# Test API directly
+$ curl http://localhost:8080/api/flags
+
+# Should return JSON with all flag values
+----
+
+**Frontend shows "undefined":**
+[source,console]
+----
+# Check browser console (F12)
+# Look for network errors or API failures
+# Verify frontend .env has correct API URL
+----
+====
+
+=== Checkpoint: Basic Flags Working
+
+Before moving to advanced patterns, verify:
+
+- [x] 4 boolean flags created in CloudBees
+- [x] Flags sync to application instantly via SSE (or within 60 seconds via polling)
+- [x] Feature flag console displays all values
+- [x] UI features respond to flag changes
+- [x] Can toggle flags on/off in CloudBees
+- [x] Changes reflect in application
+
+**You now have a working feature flag implementation!**
+
+The rest of this tutorial covers advanced patterns like percentage rollouts, user targeting, and A/B testing.
+
+== Advanced Flag Patterns
+
+=== Understanding CloudBees Properties
+
+CloudBees uses two types of properties for feature flag targeting:
+
+==== Built-in Properties
+
+Built-in properties (prefixed with `rox.`) are automatically provided by the SDK:
+
+* `rox.platform` - Platform name (e.g., "Go")
+* `rox.now` - Current timestamp
+* `rox.app_release` - Application version
+
+NOTE: `rox.distinct_id` is only available in client-side SDKs (JavaScript browser, iOS, Android). Server-side SDKs like Go **do not generate** this property.
+
+==== Custom Properties
+
+Custom properties are values you define and pass in your code:
+
+[source,go]
+----
+ctx := context.NewContext(map[string]interface{}{
+    "email": "user@example.com",  // Custom property
+    "plan":  "premium",
+})
+----
+
+**For percentage rollouts with server-side SDKs:**
+
+. Create the custom property in CloudBees UI (e.g., name: `email`)
+. Pass it in your code context (e.g., `"email": userEmail`)
+. Configure the flag's stickiness property to use your custom property
+. Property names must match exactly between CloudBees and your code
+
+The following patterns demonstrate how to use properties for advanced targeting and rollout strategies.
+
+Refer to: https://docs.cloudbees.com/docs/cloudbees-feature-management/latest/properties[CloudBees Properties Documentation]
+
+[IMPORTANT]
+====
+**User Context Required for Advanced Patterns**
+
+For percentage rollouts and user targeting to work correctly, you **must pass user context** to flag evaluations. The backend already passes user context in the `/api/events` endpoint you updated in Step 5.
+
+When you configured `handleEvents()`, you added:
+
+[source,go]
+----
+email := r.URL.Query().Get("email")
+roxContext := context.NewContext(map[string]interface{}{
+    "email": email,  // Property name must match CloudBees custom property
+})
+// Then pass roxContext to IsEnabled():
+if app.flags.ShowNewEvent.IsEnabled(roxContext) {
+----
+
+This ensures **the same user always gets the same flag value** (sticky rollout). The property name (`"email"`) must match the custom property you'll create in CloudBees for stickiness to work. Without user context, flags would evaluate randomly on each request, causing inconsistent experiences.
+====
+
+=== Pattern 1 - Percentage Rollout
+
+Gradually roll out features to a percentage of users.
+
+==== Use Case: After Dark Parade Rollout
+
+**Scenario**: Enable the After Dark Parade event for 20% of users initially to test demand, then gradually increase based on guest feedback and capacity planning.
+
+==== Step 1 - Create Custom Property for Stickiness
+
+Before configuring the percentage rollout, you need to create a custom property that CloudBees will use to ensure sticky behavior (same user always gets the same result).
+
+. In CloudBees, navigate to **Feature management** in the left sidebar
+. Click on the **Custom properties** tab underneath the Application dropdown
+. Click **Create custom property**
+. Fill in the details:
+** **Custom property name**: `email`
+** **Description**: `User email for sticky rollouts`
+** **Data Type**: `String`
+. Click **Save**
+
+IMPORTANT: The custom property name (`email`) must match the property name you pass in your code's context. This is how CloudBees knows which value to hash for sticky rollouts.
+
+==== Step 2 - Configure Percentage Rollout
+
+. Open the `ShowNewEvent` flag in CloudBees (you already enabled this in Task 1)
+. Select **Development** environment from the dropdown if not selected
+. Click the **Set to** dropdown and select **Split** (change from Boolean true/false)
+. Configure the split:
+** Serve `true` to `20%` of users
+** Serve `false` to `80%` of users
+. Click **Save configuration**
+. Ensure the toggle switch on the right is **On**
+
+[NOTE]
+====
+You should see the flag configuration page with the "Set to" dropdown showing Split, and the percentage split configured as 20% true and 80% false.
+====
+
+==== Step 3 - Configure Stickiness Property
+
+This critical step ensures users get consistent flag values based on their email.
+
+. In the **Flag configuration settings** panel (right side of the screen from the 3 dots menu)
+. Find the **Stickiness property** dropdown
+. Change from `rox.distinct_id` to your custom property: **`email`**
+. Click **Update**
+
+[NOTE]
+====
+You should see the flag configuration settings panel with the "Stickiness property" dropdown changed from "rox.distinct_id" to the custom property "email".
+====
+
+NOTE: Built-in properties (prefixed with `rox.`) like `rox.distinct_id` are generated by the SDK. In our server-side-only pattern, we can't control or predict these generated values, so we use custom properties instead. Custom properties are values YOU define in your code context (like `email`, `userId`, `plan`). In client-side SDK implementations (React, JavaScript), the SDK maintains consistent `rox.distinct_id` values and can be used for targeting.
+
+==== Step 4 - Understanding Stickiness
+
+This section explains how sticky rollouts work to ensure consistent user experiences.
+
+===== Visual: Request Flow for Sticky Rollouts
+
+....
+┌─────────────┐
+│   Browser   │
+│ user3@      │
+│ example.com │
+└──────┬──────┘
+       │ HTTP GET /api/events?email=user3@example.com
+       ▼
+┌─────────────────────────────────────────────────┐
+│           Go Backend Handler                     │
+│                                                  │
+│  email := r.URL.Query().Get("email")           │
+│  // email = "user3@example.com"                │
+│                                                  │
+│  ctx := context.NewContext(map[string]{         │
+│    "email": email                                │
+│  })                                              │
+│  // ctx = {"email": "user3@example.com"}       │
+└──────┬──────────────────────────────────────────┘
+       │ IsEnabled(ctx)
+       ▼
+┌─────────────────────────────────────────────────┐
+│        CloudBees SDK (In-Memory)                 │
+│                                                  │
+│  1. Get stickiness property → "email"           │
+│  2. Extract value → "user3@example.com"         │
+│  3. Hash(value + seed) → 0.12 (12%)             │
+│  4. Compare: 0.12 < 0.20? → TRUE                │
+└──────┬──────────────────────────────────────────┘
+       │ return TRUE
+       ▼
+┌─────────────────────────────────────────────────┐
+│              Backend Response                    │
+│                                                  │
+│  events = [base events] + After Dark Parade     │
+│  return JSON with 4 events                       │
+└──────┬──────────────────────────────────────────┘
+       │ HTTP 200 OK
+       ▼
+┌─────────────┐
+│   Browser   │
+│ Displays 4  │
+│   events    │
+└─────────────┘
+
+Key: Same email → Same hash → Same result (sticky!)
+....
+
+===== Understanding Context in Go SDK
+
+The `context.NewContext()` function creates a context object for flag evaluation:
+
+[source,go]
+----
+import "github.com/rollout/rox-go/v5/core/context"
+
+// Create context with user properties
+ctx := context.NewContext(map[string]interface{}{
+    "email": "[email protected]",
+})
+
+// Evaluate flag with context
+isEnabled := flags.ShowNewEvent.IsEnabled(ctx)
+----
+
+**How it works:**
+
+. SDK receives context with your custom properties (e.g., `{"email": "user3@example.com"}`)
+. CloudBees uses the configured stickiness property to extract the identifier
+. SDK hashes the identifier value to a number between 0-1
+. The hash determines which group the user falls into (e.g., < 0.20 = 20% group)
+. Same identifier always produces the same hash (sticky behavior)
+
+**Key Points:**
+
+* Context properties are key-value pairs you define
+* Property values come from your application (query parameters, sessions, etc.)
+* CloudBees uses the stickiness property for consistent user experiences
+* The property name in CloudBees must match the property name in your code
+
+For more details, refer to: https://docs.cloudbees.com/docs/cloudbees-feature-management/latest/percentage-rollouts[CloudBees Percentage Rollouts]
+
+==== Step 5 - Update Frontend to Pass User Context
+
+For sticky rollouts to work, the frontend must pass the user's email to the backend so it can be included in the flag evaluation context.
+
+**Update `frontend/src/api.js`:**
+
+Modify the `getEvents()` function to accept and pass the email parameter:
+
+[source,javascript]
+----
+export async function getEvents(email) {
+  const query = email ? `?email=${encodeURIComponent(email)}` : '';
+  return fetchJSON(`${API_BASE}/api/events${query}`);
+}
+----
+
+**Update `frontend/src/App.jsx`:**
+
+Find the `useEffect` hook that loads data (around line 32-60). Make two changes:
+
+**Change 1:** Pass `currentUser` to both `getFlags()` and `getEvents()`:
+
+[source,javascript]
+----
+async function load() {
+  try {
+    const [flagData, eventData, promoData] = await Promise.all([
+      getFlags(currentUser),      // Pass currentUser
+      getEvents(currentUser),     // Pass currentUser
+      getPromotions(userSegment)
+    ]);
+    if (!alive) return;
+    setFlags(flagData);
+    console.log('Flags loaded:', flagData);
+    setEvents(eventData);
+    setPromotions(promoData);
+  } catch (err) {
+    if (!alive) return;
+    setError(err.message || 'Unable to load theme park data.');
+  } finally {
+    if (!alive) return;
+    setLoading(false);
+  }
+}
+----
+
+**Change 2:** Add `currentUser` to the dependency array so data reloads when the user logs in/out:
+
+[source,javascript]
+----
+    load();
+    return () => {
+      alive = false;
+    };
+  }, [currentUser]);  // Add currentUser as dependency
+----
+
+**Save both files.** The frontend dev server should auto-reload.
+
+[IMPORTANT]
+====
+Without these changes, all requests will be sent without an email, causing the backend to evaluate flags with an empty context. This means all users will get the same hash result and won't demonstrate the percentage split behavior correctly.
+====
+
+==== Step 6 - Test Rollout
+
+Test the percentage rollout using the browser's login simulation:
+
+. Open your browser to `http://localhost:5173`
+. In the login bar below the header, enter an email address (e.g., `user1@example.com`)
+. Click **Login**
+. Wait a few seconds for the flag to update (SSE notification is typically instant)
+. Refresh your browser
+. Check the **"Upcoming events"** section on the left side
+** If in the 20%: You'll see **4 events** including "After Dark Parade" (Fridays - neon floats and glow-in-the-dark confetti)
+** If in the 80%: You'll see only **3 events** (Sunrise Carousel, Riverboat Spectacle, Skyline Fireworks)
+. Click **Logout**
+. Repeat with different email addresses to test the split behavior:
+** Try: `user2@example.com`, `user3@example.com`, `user4@example.com`, `user5@example.com`
+** Each email will consistently show either 4 events or 3 events based on the 20/80 split
+
+**Expected behavior:**
+
+* Approximately 20% of users will see the 4th event (After Dark Parade)
+* Approximately 80% of users will see only 3 events
+* Each specific email will always get the same result (sticky rollout)
+* Logging in with the same email again will show the same number of events
+
+**Visual Difference:**
+
+* **Enabled (20%)**: 4 event cards displayed, including "After Dark Parade" at the bottom
+* **Disabled (80%)**: Only 3 event cards displayed, no After Dark Parade
+
+=== Pattern 2 - Target Groups
+
+Create reusable user segments for consistent targeting.
+
+==== Use Case: Beta Testers
+
+**Scenario**: Enable VIP features for internal beta testers.
+
+==== Step 1 - Create Target Group
+
+. Navigate to **Feature management > Target groups**
+. Click **Create target group**
+. Enter details:
++
+[cols="1,3"]
+|===
+|Field |Value
+
+|Name
+|`beta-testers`
+
+|Description
+|Internal users testing new features
+|===
++
+. Add matching rule:
+** **Property**: `email`
+** **Operator**: `regExp match`
+** **Value**: `.*@yourcompany\.com$`
+
+. Click **Save**
+
+[NOTE]
+====
+You should see the Create Target Group dialog with the name "beta-testers", description, and a matching rule configured with property "email", operator "regExp match", and value ".*@yourcompany\.com$" (a regex pattern that matches emails ending with @yourcompany.com).
+====
+
+==== Step 2 - Apply Target Group to Flag
+
+. Open the `EnableVipPass` flag
+. Select **Development** environment
+. Click **Add new rule** (to the right of the On/Off toggle)
+. Change the IF dropdown to **Target group**
+. Change the Matches dropdown to **Matches any of the following**
+. Select `beta-testers` in the Groups dropdown
+. Change the THEN dropdown to: `true`
+. Change the ELSE dropdown to: `false`
+. Set priority: Move to top of rules (should already be at the top)
+. Click **Save configuration**, then toggle the rule **On**
+
+[NOTE]
+====
+You should see the EnableVipPass flag configuration with a targeting rule that specifies the "beta-testers" target group serving variation "true", with the rule at the top of the priority list.
+====
+
+==== Step 3 - Test Targeting
+
+Test the target group rule by observing flag evaluation in the browser console. **Note: There is no UI change to observe at this step** - we're verifying that the flag value changes based on the target group match.
+
+. Open your browser to `http://localhost:5173`
+. Test with an email **in** the target group:
+** In the login bar, enter: `john@yourcompany.com`
+** Click **Login**
+** Wait a few seconds (SSE notification is typically instant)
+** Open the browser developer tools (F12 or Cmd+Option+I on Mac)
+** Click the **Console** tab if not already selected
+** Look for the `Flags loaded:` output
+** Expand the object and check `enableVipPass: true`
+. Test with an email **outside** the target group:
+** Click **Logout** in the browser
+** Enter: `user@example.com`
+** Click **Login**
+** Wait a few seconds (SSE notification is typically instant)
+** Check the browser Console again for `Flags loaded:` output
+** Expand the object and check `enableVipPass: false`
+
+**Expected browser console output:**
+
+With `john@yourcompany.com` (matches target group):
+----
+Flags loaded: Object { enablePromos: true, enableTicketUpsells: true, enableVipPass: true, showNewEvent: true }
+----
+
+With `user@example.com` (doesn't match target group):
+----
+Flags loaded: Object { enablePromos: true, enableTicketUpsells: true, enableVipPass: false, showNewEvent: false }
+----
+
+[IMPORTANT]
+====
+**You're checking the browser console (F12), not the application UI.** The `EnableVipPass` flag is evaluated by the backend and returned via the `/api/flags` endpoint, but the frontend on the `feature-flags-clean` branch doesn't implement any UI rendering for this flag. You're verifying that CloudBees correctly evaluates the user's email against the target group regex pattern.
+
+The `feature-flags-complete` branch includes a VIP lane preview panel that conditionally renders based on `flags.enableVipPass` if you want to see a complete implementation.
+====
+
+=== Pattern 3 - User Property Targeting
+
+Target features based on custom user properties.
+
+==== Use Case: Premium User Features
+
+**Scenario**: Show ticket upsells only to premium plan users.
+
+==== Step 1 - Add Custom Properties to Backend
+
+Edit `backend/handlers.go` to add the `plan` parameter to the `handleFlags` function.
+
+Find the `handleFlags` function and update it to get the `plan` query parameter and add it to the context:
+
+[source,go]
+----
+func (app *App) handleFlags(w http.ResponseWriter, r *http.Request) {
+    if r.Method != http.MethodGet {
+        writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+        return
+    }
+
+    // Retrieve user email and plan for targeting
+    email := r.URL.Query().Get("email")
+    plan := r.URL.Query().Get("plan")  // Add this line
+
+    // Create context with user properties
+    roxContext := context.NewContext(map[string]interface{}{
+        "email": email,  // Must match custom property in CloudBees
+        "plan":  plan,   // Add this line - used for targeting rules
+    })
+
+    // Evaluate flags with context
+    currentFlags := map[string]bool{
+        "showNewEvent":        app.flags.ShowNewEvent.IsEnabled(roxContext),
+        "enableVipPass":       app.flags.EnableVipPass.IsEnabled(roxContext),
+        "enableTicketUpsells": app.flags.TicketUpsells.IsEnabled(roxContext),
+        "enablePromos":        app.flags.EnablePromos.IsEnabled(roxContext),
+    }
+
+    writeJSON(w, http.StatusOK, currentFlags)
+}
+----
+
+**Changes made:**
+- Added `plan := r.URL.Query().Get("plan")` to retrieve the plan parameter
+- Added `"plan": plan` to the context map for flag evaluation
+
+Save the file and restart the backend server:
+
+[source,bash]
+----
+# Stop the current server (Ctrl+C in the terminal running it)
+# Then restart:
+cd backend
+go run .
+----
+
+==== Step 2 - Update Frontend API Call
+
+The `getFlags` function in `frontend/src/api.js` was already updated in Pattern 1 to accept the `plan` parameter.
+
+Verify it matches this implementation:
+
+[source,javascript]
+----
+// Updated: Accepts 'email' and 'plan' for user targeting
+export async function getFlags(email, plan = 'free') {
+  const params = new URLSearchParams();
+  if (email) params.append('email', email);
+  params.append('plan', plan);  // Plan parameter for targeting
+
+  const query = params.toString() ? `?${params.toString()}` : '';
+  return fetchJSON(`${API_BASE}/api/flags${query}`);
+}
+----
+
+Update `frontend/src/App.jsx` to add the `userPlan` state and pass it to `getFlags`.
+
+Find the state declarations section (around line 10-15) and add the userPlan state:
+
+[source,javascript]
+----
+export default function App() {
+  // User context
+  const [currentUser, setCurrentUser] = useState(localStorage.getItem('theme_park_user') || '');
+  const [tempEmail, setTempEmail] = useState('');
+  const [userPlan, setUserPlan] = useState('free'); // Add this line: free, premium, enterprise
+
+  // Feature flags state
+  const [flags, setFlags] = useState(null);
+  // ... other state variables
+----
+
+Find the `useEffect` hook that loads flags (around line 38-66) and update it to pass `userPlan` to `getFlags`, and add `userPlan` to the dependency array:
+
+[source,javascript]
+----
+useEffect(() => {
+  let alive = true;
+  const userSegment = 'vip';
+
+  async function load() {
+    try {
+      // Pass the currentUser email and plan to the API
+      const [flagData, eventData, promoData] = await Promise.all([
+        getFlags(currentUser, userPlan),  // Add userPlan parameter here
+        getEvents(currentUser),
+        getPromotions(userSegment)
+      ]);
+      if (!alive) return;
+      setFlags(flagData);
+      setEvents(eventData);
+      setPromotions(promoData);
+    } catch (err) {
+      if (!alive) return;
+      setError(err.message || 'Unable to load theme park data.');
+    } finally {
+      if (!alive) return;
+      setLoading(false);
+    }
+  }
+  load();
+  return () => {
+    alive = false;
+  };
+}, [currentUser, userPlan]);  // Add userPlan to dependency array
+----
+
+**Changes made:**
+- Added `userPlan` state with default value 'free'
+- Passed `userPlan` to `getFlags()` call
+- Added `userPlan` to useEffect dependency array so flags reload when plan changes
+
+==== Step 3 - Create Custom Property for Plan Targeting
+
+Before configuring the flag rule, create a custom property that CloudBees will use for targeting users based on their plan.
+
+. In CloudBees, navigate to **Feature management** in the left sidebar
+
+. Click on the **Custom properties** tab underneath the Application dropdown
+
+. Click **Create custom property**
+
+. Fill in the details:
+** **Custom property name**: `plan`
+** **Description**: `User subscription plan for targeting`
+** **Data Type**: `String`
+
+. Click **Save**
+
+IMPORTANT: The custom property name (`plan`) must match the property name you pass in your backend code's context (`"plan": plan`).
+
+==== Step 4 - Configure Flag Rule
+
+Now configure the TicketUpsells flag to enable for premium and enterprise users only.
+
+. Open the `TicketUpsells` flag in CloudBees
+
+. Select **Development** environment from the dropdown
+
+. Click **Add new rule** (to the right of the On/Off toggle)
+
+. Change the IF dropdown to **Property**
+
+. Click in the **Property name** field. A dropdown will appear showing ROX PROPERTIES and CUSTOM PROPERTIES. Select `plan` from the CUSTOM PROPERTIES section.
+
+. After selecting the property, an **Operator** dropdown will appear. Click it and select **equals one of**
+
+. In the values field that appears, type `premium` and press Enter to add it
+
+. Type `enterprise` and press Enter to add it
+
+. Change the THEN dropdown to `True`
+
+. Change the ELSE dropdown to `False`
+
+. Click **Save configuration**, then toggle the rule **On**
+
+[NOTE]
+====
+You should see the TicketUpsells flag configuration with a targeting rule where the custom property "plan" is one of "premium" or "enterprise", serving variation "True", with ELSE serving "False" to all other users.
+====
+
+==== Step 5 - Test Property-Based Targeting
+
+Open the browser console (F12, then click Console tab) to verify flag values for different plans.
+
+. Test with free plan (default):
++
+The `userPlan` state defaults to `'free'` in App.jsx. Check the browser console for the flags object. You should see:
++
+[source,javascript]
+----
+{
+  "enablePromos": false
+  "enableTicketUpsells": false      // False for free plan
+  "enableVipPass": true/false       // Based on target group
+  "showNewEvent": true/false        // Based on percentage rollout
+}
+----
+
+. Test with premium plan:
++
+Edit `frontend/src/App.jsx` and change the userPlan state initialization from `'free'` to `'premium'`:
++
+[source,javascript]
+----
+const [userPlan, setUserPlan] = useState('premium'); // Change from 'free' to 'premium'
+----
++
+Save the file. The dev server will hot-reload. Check the browser console. You should see `enableTicketUpsells: true`.
+
+. Test with enterprise plan:
++
+Change the userPlan state initialization to `'enterprise'`:
++
+[source,javascript]
+----
+const [userPlan, setUserPlan] = useState('enterprise'); // Change to 'enterprise'
+----
++
+Save the file. Check the browser console. You should see `enableTicketUpsells: true`.
+
+. Restore the default:
++
+Change the userPlan back to `'free'`:
++
+[source,javascript]
+----
+const [userPlan, setUserPlan] = useState('free'); // Restore to 'free'
+----
++
+Save the file.
+
+[NOTE]
+====
+This pattern demonstrates property-based targeting. The frontend passes the `plan` value to the backend, which includes it in the CloudBees context for flag evaluation. Users with premium or enterprise plans see `enableTicketUpsells: true`, while free plan users see `false`. The flag updates instantly via SSE when you change the plan value because CloudBees re-evaluates with the new context.
+====
+
+=== Pattern 4 - Kill Switch
+
+Operational flag for emergency feature disable.
+
+==== Use Case: Payment Processing Kill Switch
+
+**Scenario**: Quickly disable payment processing if issues detected.
+
+==== Step 1 - Add Kill Switch Flag to Backend
+
+Edit `backend/main.go` to add the `EnablePayments` flag.
+
+Find the `Flags` struct (around line 13) and add the EnablePayments field:
+
+[source,go]
+----
+type Flags struct {
+    ShowNewEvent   server.RoxFlag
+    EnableVipPass  server.RoxFlag
+    TicketUpsells  server.RoxFlag
+    EnablePromos   server.RoxFlag
+    EnablePayments server.RoxFlag  // Add this line - Kill switch for payments
+}
+----
+
+Find the `flags` initialization (around line 20) and add the EnablePayments initialization:
+
+[source,go]
+----
+var flags = &Flags{
+    ShowNewEvent:   server.NewRoxFlag(false),
+    EnableVipPass:  server.NewRoxFlag(false),
+    TicketUpsells:  server.NewRoxFlag(true),
+    EnablePromos:   server.NewRoxFlag(true),
+    EnablePayments: server.NewRoxFlag(true),  // Add this line - Enabled by default (kill switch)
+}
+----
+
+==== Step 2 - Implement Kill Switch Logic
+
+Edit `backend/handlers.go` to add the kill switch check at the start of the purchase handler.
+
+Find the `handlePurchase` function (around line 128) and add the kill switch check right after the method validation:
+
+[source,go]
+----
+func (app *App) handlePurchase(w http.ResponseWriter, r *http.Request) {
+    if r.Method != http.MethodPost {
+        writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+        return
+    }
+
+    // Add these lines - Check payment kill switch
+    if !app.flags.EnablePayments.IsEnabled(nil) {
+        writeError(w, http.StatusServiceUnavailable,
+            "Payment processing is temporarily unavailable. Please try again later.")
+        return
+    }
+
+    var req PurchaseRequest
+    decoder := json.NewDecoder(r.Body)
+    // ... rest of function continues
+}
+----
+
+**Changes made:**
+- Added kill switch check at the start of handlePurchase
+- Returns 503 Service Unavailable when payments are disabled
+- Uses `IsEnabled(nil)` since this is a global operational flag (no user context needed)
+
+Save both files and restart the backend server:
+
+[source,bash]
+----
+# Stop the current server (Ctrl+C in the terminal running it)
+# Then restart:
+cd backend
+go run .
+----
+
+==== Step 3 - Verify Flag Auto-Creation and Configure Environments
+
+After restarting the backend in Step 2, the `EnablePayments` flag is automatically created in CloudBees when the SDK registers it.
+
+. Navigate to CloudBees **Feature Management** in your browser
+
+. You should see the `EnablePayments` flag in the list
+
+. Click on the `EnablePayments` flag to open its configuration
+
+. Select **Development** environment from the dropdown
+
+. Configure the flag:
++
+** Leave "Set to" as `Value written in source code` (this uses the `true` default from your Go code)
+** Click **Save configuration**
+** Toggle the flag **On** (this activates the flag without requiring another save)
+
+==== Step 4 - Add Production Environment (Optional)
+
+Kill switches are most valuable in Production. If you don't have a Production environment yet, create one now.
+
+. Click on **Configurations** in the left sidebar
+
+. Select the **Environments** tab
+
+. Click **Create environment**
+
+. Enter:
+** **Name**: `Production`
+** **Description**: `Production environment for live traffic`
+
+. Click **Submit**
+
+. Click on **Applications** in the left sidebar
+
+. Click the 3 dots menu of the **theme-park-demo** application and select **Edit**
+
+. Under the Environments section, click **Add environment** and select `Production` from the dropdown
+
+. Click **Save**
+
+. Return to **Feature Management** from the left sidebar
+
+. Observe the **Copy SDK key** link for the Production environment, which would be needed when to populate `FM_KEY` in production deployments
+
+==== Step 5 - Configure Flag for Production Environment
+
+. Open the `EnablePayments` flag
+
+. Select **Production** environment from the dropdown
+
+. Configure for production:
++
+** Leave "Set to" as `Value written in source code` (uses the safe default from your code)
+** Toggle the flag **On**
+
+[IMPORTANT]
+====
+In an emergency, you can instantly change the Production environment to `False` to disable all payment processing without deploying new code. This is the key benefit of a kill switch.
+====
+
+**Best Practices for Kill Switches:**
+
+* Default to safe state (true = feature enabled, not disabled)
+* Document emergency procedure for your team
+* Grant operations team override access to kill switches
+* Monitor flag changes with alerts
+* Test kill switch behavior in Development before relying on it in Production
+
+== Implementing 10+ Feature Flags
+
+This section provides reference documentation for the complete 13-flag implementation available in the `feature-flags-complete` branch.
+
+[IMPORTANT]
+====
+**This Section is Reference Material**
+
+The core tutorial (Patterns 1-4) teaches you how to implement 5 flags:
+- `ShowNewEvent`, `EnableVipPass`, `TicketUpsells`, `EnablePromos`, `EnablePayments`
+
+This section describes the **complete implementation** with 13 flags (5 from core tutorial + 8 additional), demonstrating diverse patterns for UI features, backend logic, configuration, experimentation, and operations.
+
+**Two ways to use this section:**
+
+1. **Reference Only**: Review these patterns to understand the full capabilities demonstrated in the `feature-flags-complete` branch
+2. **Hands-On Extension**: Follow the code examples to extend your implementation beyond the core 5 flags
+
+**Code examples show**: The abbreviated code snippets below show which parts to add. For complete, working implementations, refer to the `feature-flags-complete` branch files.
+
+**Backend restarts required**: After modifying Go code in `backend/main.go` or `backend/handlers.go`, stop your backend server (Ctrl+C) and restart it with `go run .`
+====
+
+=== Flag Set Overview
+
+[cols="1,2,2,2",options="header"]
+|===
+|#
+|Flag Name
+|Type
+|Purpose
+
+|1
+|`ShowNewEvent`
+|Boolean
+|Conditional content
+
+|2
+|`EnableVipPass`
+|Boolean
+|Premium feature access
+
+|3
+|`TicketUpsells`
+|Boolean
+|Upsell offers
+
+|4
+|`EnablePromos`
+|Boolean
+|Promotional content
+
+|5
+|`EnablePayments`
+|Boolean
+|Kill switch for payments
+
+|6
+|`MaintenanceMode`
+|Boolean
+|Operations kill switch
+
+|7
+|`MaxTicketQuantity`
+|Number
+|Business rule configuration
+
+|8
+|`PaymentProvider`
+|String
+|Service selection
+
+|9
+|`EnableReviews`
+|Boolean
+|User-generated content
+
+|10
+|`PricingExperiment`
+|String
+|A/B testing
+
+|11
+|`EnableGuestCheckout`
+|Boolean
+|Checkout flow variation
+
+|12
+|`ShowWeatherWidget`
+|Boolean
+|Third-party integration
+
+|13
+|`EnableDarkMode`
+|Boolean
+|UI theme toggle
+|===
+
+=== Implementation Guide
+
+==== Flags 1-5: Covered in Core Tutorial
+
+These flags are implemented through Patterns 1-4:
+
+* **Flag 1: `ShowNewEvent`** - Pattern 1 (Percentage Rollout) and Task 2
+* **Flag 2: `EnableVipPass`** - Pattern 2 (Target Groups) and Task 2
+* **Flag 3: `TicketUpsells`** - Pattern 3 (User Property Targeting) and Task 2
+* **Flag 4: `EnablePromos`** - Task 2 (basic implementation)
+* **Flag 5: `EnablePayments`** - Pattern 4 (Kill Switch)
+
+==== Flag 6: MaintenanceMode (Operations Kill Switch)
+
+Similar to the `EnablePayments` kill switch from Pattern 4, but implemented as middleware that blocks all requests except health checks.
+
+**Backend Implementation:**
+
+Find the `Flags` struct in `backend/main.go` (around line 13) and add MaintenanceMode:
+
+[source,go]
+----
+type Flags struct {
+    ShowNewEvent   server.RoxFlag
+    EnableVipPass  server.RoxFlag
+    TicketUpsells  server.RoxFlag
+    EnablePromos   server.RoxFlag
+    EnablePayments server.RoxFlag
+    MaintenanceMode server.RoxFlag  // Add this line
+}
+----
+
+Find the `flags` initialization in `backend/main.go` (around line 20) and add MaintenanceMode default:
+
+[source,go]
+----
+var flags = &Flags{
+    ShowNewEvent:   server.NewRoxFlag(false),
+    EnableVipPass:  server.NewRoxFlag(false),
+    TicketUpsells:  server.NewRoxFlag(true),
+    EnablePromos:   server.NewRoxFlag(true),
+    EnablePayments: server.NewRoxFlag(true),
+    MaintenanceMode: server.NewRoxFlag(false),  // Add this line
+}
+----
+
+Find the `main()` function in `backend/main.go` (around line 47) and wrap your routes with the middleware. Replace:
+
+[source,go]
+----
+server := &http.Server{
+    Addr:    ":" + config.Port,
+    Handler: withCORS(config.AllowedOrigin, app.routes()),
+    // ...
+}
+----
+
+With:
+
+[source,go]
+----
+// Create HTTP server with middleware
+handler := app.maintenanceMiddleware(
+    withCORS(config.AllowedOrigin, app.routes()),
+)
+
+server := &http.Server{
+    Addr:    ":" + config.Port,
+    Handler: handler,  // Use the wrapped handler
+    ReadHeaderTimeout: 5 * time.Second,
+}
+----
+
+Add the middleware function to `backend/handlers.go` (after the routes() function):
+
+[source,go]
+----
+// maintenanceMiddleware checks for maintenance mode and blocks requests if active
+func (app *App) maintenanceMiddleware(next http.Handler) http.Handler {
+    return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        // Allow health check and flags endpoint even during maintenance
+        if r.URL.Path == "/api/health" || r.URL.Path == "/api/flags" {
+            next.ServeHTTP(w, r)
+            return
+        }
+
+        // Check maintenance mode flag
+        if app.flags.MaintenanceMode.IsEnabled(nil) {
+            writeJSON(w, http.StatusServiceUnavailable, map[string]interface{}{
+                "status":  "maintenance",
+                "message": "System is currently under maintenance. Please check back soon.",
+                "retry_after": 300, // Suggest retry after 5 minutes
+            })
+            return
+        }
+
+        next.ServeHTTP(w, r)
+    })
+}
+----
+
+Update `handleHealth` in `backend/handlers.go` (around line 57) to report maintenance status:
+
+[source,go]
+----
+func (app *App) handleHealth(w http.ResponseWriter, r *http.Request) {
+    if r.Method != http.MethodGet {
+        writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+        return
+    }
+
+    health := map[string]interface{}{
+        "status": "ok",
+        "timestamp": time.Now().UTC().Format(time.RFC3339),
+        "maintenance_mode": app.flags.MaintenanceMode.IsEnabled(nil),  // Add this line
+    }
+
+    writeJSON(w, http.StatusOK, health)
+}
+----
+
+Update `handleFlags` in `backend/handlers.go` (around line 226) to include the `maintenanceMode` flag in the response:
+
+[source,go]
+----
+// Evaluate flags with context
+currentFlags := map[string]bool{
+    "showNewEvent":        app.flags.ShowNewEvent.IsEnabled(roxContext),
+    "enableVipPass":       app.flags.EnableVipPass.IsEnabled(roxContext),
+    "enableTicketUpsells": app.flags.TicketUpsells.IsEnabled(roxContext),
+    "enablePromos":        app.flags.EnablePromos.IsEnabled(roxContext),
+    "maintenanceMode":     app.flags.MaintenanceMode.IsEnabled(roxContext),  // Add this line
+}
+----
+
+**Restart backend** after making these changes.
+
+**Frontend Implementation:**
+
+In `frontend/src/App.jsx`, add the maintenance banner at the start of the return statement (around line 95), right after `<div className="page">` and before `<header className="hero">`:
+
+[source,javascript]
+----
+return (
+  <div className="page">
+    {/* Add this maintenance mode banner */}
+    {flags?.maintenanceMode && (
+      <div style={{
+        background: '#ff6b6b',
+        color: 'white',
+        padding: '20px',
+        textAlign: 'center',
+        marginBottom: '20px',
+        borderRadius: '8px'
+      }}>
+        <h3 style={{ margin: '0 0 10px 0' }}>Scheduled Maintenance</h3>
+        <p style={{ margin: 0 }}>Some features may be temporarily unavailable.</p>
+      </div>
+    )}
+
+    <header className="hero">
+      <div className="hero-content">
+        <p className="eyebrow">Skyline Gardens Theme Park</p>
+        {/* ... rest of hero section */}
+      </div>
+    </header>
+----
+
+The banner will appear at the top of the page (above the hero section) when the `maintenanceMode` flag is enabled, alerting users about the maintenance status.
+
+Update the `useEffect` hook in `frontend/src/App.jsx` (around line 32) to handle maintenance mode gracefully:
+
+[source,javascript]
+----
+// Load data on component mount
+useEffect(() => {
+  let alive = true;
+  const userSegment = 'vip';
+
+  async function load() {
+    try {
+      // Fetch flags first - always works even during maintenance
+      const flagData = await getFlags(currentUser, userPlan);
+      if (!alive) return;
+      setFlags(flagData);
+      console.log('Flags loaded:', flagData);
+
+      // Fetch events and promotions - may fail during maintenance
+      try {
+        const [eventData, promoData] = await Promise.all([
+          getEvents(currentUser),
+          getPromotions(userSegment)
+        ]);
+        if (!alive) return;
+        setEvents(eventData);
+        setPromotions(promoData);
+      } catch (err) {
+        // Events/promotions failed (e.g., maintenance mode)
+        console.log('Events/promotions unavailable:', err.message);
+        setEvents([]);
+        setPromotions([]);
+      }
+    } catch (err) {
+      if (!alive) return;
+      setError(err.message || 'Unable to load theme park data.');
+    } finally {
+      if (!alive) return;
+      setLoading(false);
+    }
+  }
+  load();
+  return () => {
+    alive = false;
+  };
+}, [currentUser, userPlan]);
+----
+
+This ensures flags are always loaded (even during maintenance), while gracefully handling failures for other endpoints.
+
+**CloudBees Configuration:**
+
+The `MaintenanceMode` flag will be automatically created in CloudBees when the backend starts.
+
+. Navigate to **Feature management > Flags**
+. Find the `MaintenanceMode` flag
+. Click on it to open the configuration page
+. For Development environment:
+** Set to: **Value written in source code** (default: `false`)
+** Toggle: **Off** (normal operation)
+. To test maintenance mode:
+** Toggle: **On**
+** The frontend will show a red maintenance banner
+** All API endpoints except `/api/health` and `/api/flags` will return 503 status
+. For Production environment (if added):
+** Keep toggled **Off** unless performing actual maintenance
+** Use sparingly - this affects all users
+
+**Test Maintenance Mode:**
+
+. With the flag toggled **Off**, the application should work normally
+. Toggle the flag **On** in CloudBees
+. Refresh the frontend - you should see a red banner at the top
+. The events and promotions sections will show "No events scheduled" and "No promotions active" because those endpoints are blocked
+. Try accessing `/api/events` or `/api/promotions` - should return 503
+. The `/api/health` and `/api/flags` endpoints continue working
+
+==== Flag 7: MaxTicketQuantity (Number Flag for Configuration)
+
+Demonstrates using a number flag to dynamically adjust business rules without code changes.
+
+**Backend Implementation:**
+
+Find the `Flags` struct in `backend/main.go` (around line 13) and add MaxTicketQuantity:
+
+[source,go]
+----
+type Flags struct {
+    ShowNewEvent   server.RoxFlag
+    EnableVipPass  server.RoxFlag
+    TicketUpsells  server.RoxFlag
+    EnablePromos   server.RoxFlag
+    EnablePayments server.RoxFlag
+    MaintenanceMode server.RoxFlag
+    MaxTicketQuantity server.RoxInt  // Add this line
+}
+----
+
+Find the `flags` initialization in `backend/main.go` (around line 20) and add MaxTicketQuantity default:
+
+[source,go]
+----
+var flags = &Flags{
+    ShowNewEvent:   server.NewRoxFlag(false),
+    EnableVipPass:  server.NewRoxFlag(false),
+    TicketUpsells:  server.NewRoxFlag(true),
+    EnablePromos:   server.NewRoxFlag(true),
+    EnablePayments: server.NewRoxFlag(true),
+    MaintenanceMode: server.NewRoxFlag(false),
+    MaxTicketQuantity: server.NewRoxInt(10, []int{4, 10, 20}),  // Add this line - Default: 10, variations: 4, 10, 20
+}
+----
+
+Add the `fmt` import to `backend/handlers.go` (around line 4):
+
+[source,go]
+----
+import (
+    "encoding/json"
+    "fmt"  // Add this import
+    "net/http"
+    "strings"
+    "time"
+
+    "github.com/rollout/rox-go/v5/core/context"
+)
+----
+
+Find `handlePurchase` in `backend/handlers.go` (around line 152) and add validation after decoding the request (after line 171):
+
+[source,go]
+----
+var req PurchaseRequest
+decoder := json.NewDecoder(r.Body)
+decoder.DisallowUnknownFields()
+if err := decoder.Decode(&req); err != nil {
+    writeError(w, http.StatusBadRequest, "invalid request payload")
+    return
+}
+
+// Add these lines - Check against dynamic max quantity limit
+email := req.Email
+roxContext := context.NewContext(map[string]interface{}{
+    "id":    email,
+    "email": email,
+})
+
+maxQuantity := app.flags.MaxTicketQuantity.GetValue(roxContext)
+if req.Quantity > maxQuantity {
+    writeError(w, http.StatusBadRequest,
+        fmt.Sprintf("Maximum %d tickets allowed per order", maxQuantity))
+    return
+}
+
+// Validate quantity
+if req.Quantity <= 0 {
+    req.Quantity = 1
+}
+----
+
+**Restart backend** after making these changes.
+
+**CloudBees Configuration:**
+
+. Create flag:
+** Name: `MaxTicketQuantity`
+** Type: Number
+** Default: `10`
+
+. For special events, dynamically adjust:
+** High demand: Set to `4` (limit per customer)
+** Normal: Set to `10`
+
+==== Flag 8: PaymentProvider (String Flag for Service Selection)
+
+Demonstrates using a string flag to switch between payment processors dynamically.
+
+**Backend Implementation:**
+
+Find the `Flags` struct in `backend/main.go` (around line 13) and add PaymentProvider:
+
+[source,go]
+----
+type Flags struct {
+    ShowNewEvent   server.RoxFlag
+    EnableVipPass  server.RoxFlag
+    TicketUpsells  server.RoxFlag
+    EnablePromos   server.RoxFlag
+    EnablePayments server.RoxFlag
+    MaintenanceMode server.RoxFlag
+    MaxTicketQuantity server.RoxInt
+    PaymentProvider   server.RoxString  // Add this line
+}
+----
+
+Find the `flags` initialization in `backend/main.go` (around line 20) and add PaymentProvider default:
+
+[source,go]
+----
+var flags = &Flags{
+    ShowNewEvent:   server.NewRoxFlag(false),
+    EnableVipPass:  server.NewRoxFlag(false),
+    TicketUpsells:  server.NewRoxFlag(true),
+    EnablePromos:   server.NewRoxFlag(true),
+    EnablePayments: server.NewRoxFlag(true),
+    MaintenanceMode: server.NewRoxFlag(false),
+    MaxTicketQuantity: server.NewRoxInt(10, []int{4, 10, 20}),
+    PaymentProvider:   server.NewRoxString("stripe", []string{"stripe", "paypal", "square"}),  // Add this line - Default: stripe, variations: stripe, paypal, square
+}
+----
+
+Add the `log` import to `backend/handlers.go` (around line 4):
+
+[source,go]
+----
+import (
+    "encoding/json"
+    "fmt"
+    "log"  // Add this import
+    "net/http"
+    "strings"
+    "time"
+
+    "github.com/rollout/rox-go/v5/core/context"
+)
+----
+
+In `handlePurchase` in `backend/handlers.go`, add payment provider evaluation after the price table lookup (after line 212):
+
+[source,go]
+----
+// Base pricing
+priceTable := map[string]float64{
+    "day":         59.0,
+    "park-hopper": 89.0,
+    "vip":         149.0,
+}
+unitPrice, ok := priceTable[strings.ToLower(req.TicketType)]
+if !ok {
+    writeError(w, http.StatusBadRequest, "unknown ticket type")
+    return
+}
+
+// Add these lines - Get selected payment provider
+paymentProvider := app.flags.PaymentProvider.GetValue(roxContext)
+log.Printf("Processing payment via %s for user %s", paymentProvider, email)
+
+// Build response
+response := PurchaseResponse{
+    OrderID:    "TP-" + time.Now().Format("20060102150405"),
+    TicketType: strings.ToLower(req.TicketType),
+    Quantity:   req.Quantity,
+    Total:      unitPrice * float64(req.Quantity),
+    Provider:   paymentProvider,  // Add this field
+}
+----
+
+Add `Provider` field to `PurchaseResponse` struct in `backend/models.go` (around line 23):
+
+[source,go]
+----
+type PurchaseResponse struct {
+    OrderID    string  `json:"orderId"`
+    TicketType string  `json:"ticketType"`
+    Quantity   int     `json:"quantity"`
+    Total      float64 `json:"total"`
+    Provider   string  `json:"provider"`  // Add this line
+}
+----
+
+**Restart backend** after making these changes.
+
+**CloudBees Configuration:**
+
+. Create flag:
+** Name: `PaymentProvider`
+** Type: String
+** Variations:
+*** `stripe`
+*** `paypal`
+*** `square`
+** Default: `stripe`
+
+. Use targeting rules to:
+** Test new provider with internal users
+** Regional provider preferences
+** A/B test conversion rates
+
+==== Flag 9: EnableReviews (New Endpoint with Flag Gating)
+
+Demonstrates adding a new API endpoint that's gated by a feature flag, useful for beta features.
+
+**Backend Implementation:**
+
+Find the `Flags` struct in `backend/main.go` (around line 13) and add EnableReviews:
+
+[source,go]
+----
+type Flags struct {
+    ShowNewEvent   server.RoxFlag
+    EnableVipPass  server.RoxFlag
+    TicketUpsells  server.RoxFlag
+    EnablePromos   server.RoxFlag
+    EnablePayments server.RoxFlag
+    MaintenanceMode server.RoxFlag
+    MaxTicketQuantity server.RoxInt
+    PaymentProvider   server.RoxString
+    EnableReviews  server.RoxFlag  // Add this line
+}
+----
+
+Find the `flags` initialization in `backend/main.go` (around line 20) and add EnableReviews default:
+
+[source,go]
+----
+var flags = &Flags{
+    ShowNewEvent:   server.NewRoxFlag(false),
+    EnableVipPass:  server.NewRoxFlag(false),
+    TicketUpsells:  server.NewRoxFlag(true),
+    EnablePromos:   server.NewRoxFlag(true),
+    EnablePayments: server.NewRoxFlag(true),
+    MaintenanceMode: server.NewRoxFlag(false),
+    MaxTicketQuantity: server.NewRoxInt(10),
+    PaymentProvider:   server.NewRoxString("stripe"),
+    EnableReviews:  server.NewRoxFlag(false),  // Add this line
+}
+----
+
+Find `routes()` in `backend/handlers.go` (around line 24) and add the reviews route:
+
+[source,go]
+----
+func (app *App) routes() *http.ServeMux {
+    mux := http.NewServeMux()
+    mux.HandleFunc("/api/health", app.handleHealth)
+    mux.HandleFunc("/api/flags", app.handleFlags)
+    mux.HandleFunc("/api/events", app.handleEvents)
+    mux.HandleFunc("/api/promotions", app.handlePromotions)
+    mux.HandleFunc("/api/tickets/purchase", app.handlePurchase)
+    mux.HandleFunc("/api/reviews", app.handleReviews)  // Add this line
+    return mux
+}
+----
+
+Add new handler to `backend/handlers.go` (after handlePurchase):
+
+[source,go]
+----
+// handleReviews returns visitor reviews if the feature is enabled
+func (app *App) handleReviews(w http.ResponseWriter, r *http.Request) {
+    if r.Method != http.MethodGet {
+        writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+        return
+    }
+
+    // Get user context for targeted rollout
+    email := r.URL.Query().Get("email")
+    roxContext := context.NewContext(map[string]interface{}{
+        "id":    email,
+        "email": email,
+    })
+
+    // Check if reviews are enabled for this user
+    if !app.flags.EnableReviews.IsEnabled(roxContext) {
+        writeError(w, http.StatusNotFound, "Reviews feature not available")
+        return
+    }
+
+    reviews := []Review{
+        {
+            ID:     "1",
+            User:   "Sarah M.",
+            Rating: 5,
+            Text:   "Amazing experience! The After Dark Parade was spectacular.",
+            Date:   "2026-03-10",
+        },
+        {
+            ID:     "2",
+            User:   "Mike T.",
+            Rating: 4,
+            Text:   "Great park, friendly staff, would definitely return!",
+            Date:   "2026-03-09",
+        },
+        {
+            ID:     "3",
+            User:   "Jessica L.",
+            Rating: 5,
+            Text:   "The VIP pass is worth every penny. Skip the lines and enjoy!",
+            Date:   "2026-03-08",
+        },
+    }
+
+    writeJSON(w, http.StatusOK, reviews)
+}
+----
+
+Add `Review` type to `backend/models.go` (after the PurchaseResponse struct):
+
+[source,go]
+----
+type Review struct {
+    ID     string `json:"id"`
+    User   string `json:"user"`
+    Rating int    `json:"rating"`
+    Text   string `json:"text"`
+    Date   string `json:"date"`
+}
+----
+
+Update `handleFlags` in `backend/handlers.go` to include the `enableReviews` flag in the response:
+
+[source,go]
+----
+// Evaluate flags with context
+currentFlags := map[string]bool{
+    "showNewEvent":        app.flags.ShowNewEvent.IsEnabled(roxContext),
+    "enableVipPass":       app.flags.EnableVipPass.IsEnabled(roxContext),
+    "enableTicketUpsells": app.flags.TicketUpsells.IsEnabled(roxContext),
+    "enablePromos":        app.flags.EnablePromos.IsEnabled(roxContext),
+    "maintenanceMode":     app.flags.MaintenanceMode.IsEnabled(roxContext),
+    "enableReviews":       app.flags.EnableReviews.IsEnabled(roxContext),  // Add this line
+}
+----
+
+**Restart backend** after making these changes.
+
+**Frontend Implementation:**
+
+Add `getReviews` function to `frontend/src/api.js` (after the `purchaseTickets` function):
+
+[source,javascript]
+----
+export async function getReviews(email) {
+  const query = email ? `?email=${encodeURIComponent(email)}` : '';
+  return fetchJSON(`${API_BASE}/api/reviews${query}`);
+}
+----
+
+Update the import statement in `frontend/src/App.jsx` (line 2) to include `getReviews`:
+
+[source,javascript]
+----
+import { getEvents, getFlags, getPromotions, purchaseTickets, getReviews } from './api.js';
+----
+
+Add reviews state variable in `frontend/src/App.jsx` (around line 17, after the promotions state):
+
+[source,javascript]
+----
+const [reviews, setReviews] = useState([]);
+----
+
+Add a new `useEffect` hook to load reviews when the flag is enabled (after the main data loading useEffect):
+
+[source,javascript]
+----
+// Load reviews when flag is enabled
+useEffect(() => {
+  if (!flags?.enableReviews) return;
+
+  async function loadReviews() {
+    try {
+      const reviewData = await getReviews(currentUser);
+      setReviews(reviewData);
+    } catch (err) {
+      console.error('Failed to load reviews:', err);
+      setReviews([]);
+    }
+  }
+  loadReviews();
+}, [flags, currentUser]);
+----
+
+Add the reviews UI section in `frontend/src/App.jsx`, after the "Buy tickets" section ends (around line 289), before the closing `</main>` tag:
+
+[source,javascript]
+----
+        </section>
+
+        {/* Reviews Section - Add this before closing </main> */}
+        {flags?.enableReviews && reviews.length > 0 && (
+          <section style={{ marginTop: '40px' }}>
+            <div className="panel">
+              <h3>Visitor Reviews</h3>
+              <p className="muted">See what other guests are saying about their experience</p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginTop: '20px' }}>
+                {reviews.map(review => (
+                  <div key={review.id} style={{
+                    padding: '15px',
+                    background: 'rgba(0,0,0,0.02)',
+                    borderRadius: '8px',
+                    border: '1px solid rgba(0,0,0,0.05)'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+                      <strong>{review.user}</strong>
+                      <span style={{ color: '#ffd700', fontWeight: 'bold' }}>
+                        {review.rating}/5 stars
+                      </span>
+                    </div>
+                    <p style={{ margin: '0 0 10px 0' }}>{review.text}</p>
+                    <p className="muted" style={{ fontSize: '0.85rem', margin: 0 }}>{review.date}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+        )}
+      </main>
+
+      <footer className="footer">
+----
+
+**CloudBees Configuration:**
+
+The `EnableReviews` flag will be automatically created in CloudBees when the backend starts.
+
+. Navigate to **Feature management > Flags**
+. Find the `EnableReviews` flag and click to open configuration
+. For Development environment:
+** Set to: **Scheduled**
+** Configure a gradual percentage rollout:
+*** Row 1: `0%` at current date/time (starts disabled)
+*** Click **Add row**
+*** Row 2: `10%` at [date] [time] (Week 1 - initial rollout to gather feedback)
+*** Click **Add row**
+*** Row 3: `50%` at [date] [time] (Week 2 - expand to half of users)
+*** Click **Add row**
+*** Row 4: `100%` at [date] [time] (Week 3 - full rollout)
+. Toggle: **On**
+. Click **Save configuration**
+
+**Example Rollout Schedule:**
+
+* Day 0, 00:00: 0% - Flag enabled but no users see reviews
+* Day 7, 10:00: 10% - Small subset sees reviews, monitor for issues
+* Day 14, 10:00: 50% - Half of users see reviews, check performance
+* Day 21, 10:00: 100% - All users see reviews, full rollout complete
+
+[NOTE]
+====
+For an immediate fixed-percentage rollout (without scheduled changes), use **Split** instead of **Scheduled**. This was demonstrated in Pattern 1 (Percentage Rollout). Split gives a fixed percentage of users the feature immediately with sticky behavior.
+====
+
+==== Flags 10-13: Additional Advanced Patterns
+
+The remaining flags demonstrate additional patterns:
+
+**Flag 10: PricingExperiment** (String Flag for A/B Testing)
+
+* Use case: Test different pricing strategies (`control`, `discount10`, `bundle`)
+* Backend applies dynamic pricing based on flag value
+* Track conversion rates per variant in CloudBees
+
+**Flag 11: EnableGuestCheckout** (Boolean for Business Logic)
+
+* Use case: Allow checkout without account creation
+* Useful for testing impact on conversion rate
+* Can target by user segment or roll out gradually
+
+**Flag 12: ShowWeatherWidget** (Boolean for Third-Party Integration)
+
+* Use case: Display weather information from external API
+* Gate the integration behind a flag for easy disable
+* Frontend-only implementation
+
+**Flag 13: EnableDarkMode** (Boolean for UI Theme)
+
+* Use case: Dark mode theme toggle
+* Frontend-only CSS class application
+* User preference persisted in localStorage
+
+**Complete Implementations Available:**
+
+All flags (1-13) are fully implemented in the `feature-flags-complete` branch. To see the complete working code:
+
+[source,bash]
+----
+git checkout feature-flags-complete
+# Review backend/main.go for all flag definitions
+# Review backend/handlers.go for all flag evaluations
+# Review frontend/src/App.jsx for frontend flag usage
+----
+
+The patterns demonstrated in Flags 6-9 apply to Flags 10-13:
+
+* Number flags: Define as `server.RoxInt`, use `.GetValue(context)`
+* String flags: Define as `server.RoxString`, use `.GetValue(context)`
+* Boolean flags: Define as `server.RoxFlag`, use `.IsEnabled(context)`
+* Always pass user context for targeting and sticky behavior
+* Restart backend after Go code changes
+
+== Monitoring and Validation
+
+=== Task 1 - Verify Flag Impressions
+
+==== Step 1 - Access Flag Details
+
+. Navigate to **Feature management > Flags**
+. Click on any flag (e.g., `ShowNewEvent`)
+. Select the **Impressions** tab
+
+[NOTE]
+====
+You should see the Impressions tab for the selected flag, showing total impressions, unique users, variation distribution, and a timeline chart of impression trends.
+====
+
+==== Step 2 - Understand Impression Data
+
+**Metrics Available:**
+
+* **Total impressions**: Number of times flag was evaluated
+* **Unique users**: Distinct users who triggered evaluations
+* **Variation distribution**: Percentage breakdown of returned values
+* **Timeline**: Impression trends over time
+
+==== Step 3 - Validate Flag Activity
+
+. Check impressions are being recorded after using the application
+. Verify variation distribution matches your rollout percentage
+. Confirm users are being correctly targeted
+
+=== Task 2 - Test Flag Changes in Real-Time
+
+==== Step 1 - Change Flag Value
+
+. In CloudBees, open the `EnablePromos` flag (currently set to `true`)
+. Toggle the value from `true` to `false`
+. Click **Save**
+
+==== Step 2 - Observe Application Update
+
+. Wait a few seconds for the flag to update (SSE notification is typically instant)
+. Refresh your browser (`Cmd+R` or `F5`)
+. The **"Today's promotions"** panel should now be empty with no promotion cards displayed
+
+[NOTE]
+====
+The Go SDK receives flag updates via Server-Sent Events (SSE) which are typically instant. As a backup, the SDK polls every 60 seconds. You may also restart the backend (`Ctrl+C`, then `go run .`) for immediate updates.
+====
+
+==== Step 3 - Verify Flag Console
+
+The frontend's feature flag console should update to show:
+
+----
+Promotions: Disabled
+----
+
+==== Step 4 - Re-enable the Flag
+
+. Toggle `EnablePromos` back to `true` in CloudBees
+. Click **Save**
+. Wait a few seconds (SSE notification is typically instant) and refresh browser
+. Promotion cards should reappear in the "Today's promotions" panel
+
+=== Task 3 - Debug Flag Evaluation Issues
+
+==== Common Issues and Solutions
+
+[cols="30%,35%,35%",options="header"]
+|===
+|Issue
+|Cause
+|Solution
+
+|Flag always returns default
+|SDK not connecting to CloudBees
+|Verify `FM_KEY` is correct and network allows HTTPS to cloudbees.io
+
+|Flag value doesn't update
+|Waiting for SSE notification or next poll
+|Wait up to 60 seconds or restart application for immediate update
+
+|Targeting rules not working
+|User context not passed correctly
+|Check `roxContext` includes required properties
+
+|Impressions not recorded
+|SDK initialization failed
+|Check logs for "Feature Flags initialized successfully"
+|===
+
+==== Enable Debug Logging
+
+Edit `backend/main.go` to add verbose logging:
+
+[source,go]
+----
+import "github.com/rollout/rox-go/v5/core/logging"
+
+func main() {
+    // Enable debug logging
+    logging.SetLogLevel(logging.LogLevelDebug)
+
+    // ... rest of initialization
+}
+----
+
+Restart the application and observe detailed SDK logs:
+
+----
+[ROX] Fetching configuration from CloudBees...
+[ROX] Configuration received: 12 flags
+[ROX] Flag 'ShowNewEvent' evaluated: false
+[ROX] Impression sent for flag 'ShowNewEvent'
+----
+
+== Testing Workflows
+
+=== Workflow 1 - New Feature Rollout
+
+Demonstrate a complete feature rollout from 0% to 100%.
+
+==== Scenario: Reviews Feature Launch
+
+. **Week 0 - Development**
+** Create `EnableReviews` flag in CloudBees
+** Set Development environment to `true`
+** Implement reviews feature in code
+** Test thoroughly in development
+
+. **Week 1 - Internal Testing (0.1%)**
+** Deploy to Production
+** Set Production flag to 0.1% rollout
+** Target internal team email domain
+** Gather feedback and fix issues
+
+. **Week 2 - Beta Users (5%)**
+** Increase rollout to 5%
+** Add beta testers target group
+** Monitor impressions and metrics
+** Validate performance
+
+. **Week 3 - Early Adopters (25%)**
+** Increase rollout to 25%
+** Monitor error rates and support tickets
+** Collect user feedback
+
+. **Week 4 - General Rollout (100%)**
+** Increase to 100% of users
+** Feature is fully launched
+** Monitor for one week
+
+. **Week 5 - Cleanup**
+** Remove flag checks from code
+** Archive flag in CloudBees
+** Feature is permanent
+
+=== Workflow 2 - A/B Experiment
+
+Test pricing strategies and measure conversion impact.
+
+==== Scenario: Pricing Optimization
+
+. **Setup Experiment**
+** Create `PricingExperiment` flag
+** Configure variants: control, discount10, bundle
+** Set 33/33/34 split
+
+. **Instrument Analytics**
+** Add conversion tracking code
+** Record which variant users see
+** Track: views, add-to-cart, completed purchases
+
+. **Run Experiment (2 weeks)**
+** Let variants run simultaneously
+** Collect sufficient sample size
+** Monitor for statistical significance
+
+. **Analyze Results**
+[cols="2,1,1,1"]
+|===
+|Variant |Views |Purchases |Conversion Rate
+
+|control
+|10,000
+|500
+|5.0%
+
+|discount10
+|10,000
+|650
+|6.5%
+
+|bundle
+|10,000
+|620
+|6.2%
+|===
+
+. **Make Decision**
+** Winner: discount10 (6.5% conversion)
+** Update default pricing to include discount
+** Remove experiment flag
+
+=== Workflow 3 - Emergency Rollback
+
+Quickly disable a problematic feature.
+
+==== Scenario: Payment System Issue
+
+. **Problem Detected**
+** Monitoring alerts show payment errors spiking
+** Users unable to complete purchases
+
+. **Immediate Action**
+** Navigate to `EnablePayments` flag
+** Change Production environment from `true` to `false`
+** Click **Save**
+
+. **Validation**
+** Within 30 seconds, all payment attempts blocked
+** Users see "temporarily unavailable" message
+** No code deployment required
+
+. **Investigation**
+** Team investigates payment provider issue
+** Issue identified and fixed
+
+. **Re-enable**
+** Change flag back to `true`
+** Monitor for continued stability
+** Feature restored in < 1 minute total downtime
+
+== Configuration as Code (CasC)
+
+=== Overview
+
+Configuration as Code allows you to manage feature flags, target groups, and custom properties using YAML files in a Git repository. Instead of creating flags manually through the CloudBees UI, you define them in code and CloudBees syncs them automatically.
+
+**Benefits of CasC**:
+
+* **Version Control**: All flag changes tracked in Git
+* **Code Review**: Flag configurations go through PR review process
+* **Repeatability**: Replicate configurations across environments
+* **Disaster Recovery**: Git is source of truth for all flags
+* **Scale**: Manage hundreds of flags efficiently
+* **Automation**: Integrate with CI/CD pipelines
+
+**When to Use CasC**:
+
+* Managing 10+ flags across multiple environments
+* Teams requiring approval workflows for flag changes
+* Organizations with strict change management requirements
+* Production deployments requiring audit trails
+
+**When to Use UI**:
+
+* Learning feature management concepts
+* Quick experiments or prototypes
+* One-off flag changes during incidents
+* Viewing real-time flag evaluation metrics
+
+[NOTE]
+====
+CasC is **bidirectional**. Changes made in the UI sync back to Git, and changes pushed to Git sync to the UI. This allows teams to use both methods interchangeably.
+====
+
+=== Task 1 - Connect Git Repository to CloudBees
+
+==== Step 1 - Install GitHub App
+
+Navigate to CloudBees Unify:
+
+. Go to **Settings > Integrations**
+. Click **GitHub App**
+. Click **Install CloudBees GitHub App**
+. Select your GitHub organization
+. Choose **All repositories** or select specific repositories
+. Click **Install**
+
+Expected result: GitHub App appears in your organization settings.
+
+==== Step 2 - Connect Repository
+
+In CloudBees Unify:
+
+. Navigate to **Settings > Configuration as Code**
+. Click **Connect Repository**
+. Select your GitHub organization
+. Select the repository (e.g., `theme-park-demo`)
+. Choose the branch to sync (e.g., `main`)
+. Click **Connect**
+
+Expected output:
+
+[NOTE]
+====
+You should see a confirmation message: "Repository connected successfully. Changes will sync within 30-60 seconds."
+====
+
+==== Step 3 - Verify Connection
+
+Check repository for CloudBees integration:
+
+[source,console]
+----
+$ cd /path/to/your-repo
+$ git pull
+$ ls -la .cloudbees/
+----
+
+Expected output:
+
+----
+drwxr-xr-x  3 user  staff   96 Mar 17 10:30 .cloudbees/
+----
+
+[NOTE]
+====
+CloudBees creates the `.cloudbees/` directory automatically on first sync. If you don't see it yet, create the directory structure manually (shown in next step) and push your first flag definition.
+====
+
+=== Task 2 - Create Flag via CasC
+
+==== Directory Structure
+
+CasC uses a specific directory structure:
+
+----
+.cloudbees/
+└── casc/
+    └── feature-management/
+        ├── flags/                    # Flag definitions (cross-environment)
+        ├── flag-configurations/      # Environment-specific configurations
+        │   ├── dev/
+        │   ├── staging/
+        │   └── production/
+        ├── target-groups/            # User segmentation
+        └── properties/               # Custom properties
+----
+
+==== Step 1 - Create First Flag Definition
+
+Create the directory structure and flag definition file:
+
+[source,console]
+----
+$ mkdir -p .cloudbees/casc/feature-management/flags
+$ mkdir -p .cloudbees/casc/feature-management/flag-configurations/production
+----
+
+Create `.cloudbees/casc/feature-management/flags/default.DemoFeature.yaml`:
+
+[source,yaml]
+----
+---
+apiVersion: featuremanagement.cloudbees.io/v1alpha1
+kind: flag
+
+flag: default.DemoFeature
+flagType: boolean
+description: "My first CasC-managed feature flag"
+labels:
+  - casc-demo
+  - tutorial
+
+availableValues:
+  - "true"
+  - "false"
+
+isPermanent: false
+----
+
+**Format Notes**:
+
+* `flag: default.DemoFeature` - Flag name with `default.` namespace prefix
+* `flagType: boolean` - Flag type (boolean, string, number)
+* `availableValues` - Must list `"true"` first, then `"false"` (UI-generated pattern)
+* `isPermanent: false` - Temporary flag that should be removed after rollout
+
+==== Step 2 - Create Flag Configuration
+
+Create `.cloudbees/casc/feature-management/flag-configurations/production/default.DemoFeature.config.yaml`:
+
+[source,yaml]
+----
+---
+apiVersion: featuremanagement.cloudbees.io/v1alpha1
+kind: flag-configuration
+
+flag: default.DemoFeature
+
+enabled: true
+
+stickinessProperty: rox.distinct_id
+
+defaultValue: false
+
+conditions: []
+----
+
+**Critical Format Requirements**:
+
+* **Use `defaultValue:` NOT `value:`** - The `value` field does not sync from Git to UI
+* **Include `stickinessProperty`** - Required even for simple flags
+* **Include `conditions: []`** - Required even if empty
+* **File naming**: `default.DemoFeature.config.yaml` - Must use `.config.yaml` extension
+
+[IMPORTANT]
+====
+**Common Mistake**: Using `value: false` instead of `defaultValue: false`. The `value` field is used for condition outcomes, not the default flag value. CloudBees will silently ignore configurations with incorrect field names.
+====
+
+==== Step 3 - Commit and Push
+
+[source,console]
+----
+$ git add .cloudbees/
+$ git commit -m "Add DemoFeature flag via CasC"
+$ git push origin main
+----
+
+==== Step 4 - Wait for Sync
+
+CloudBees typically syncs within 30-60 seconds:
+
+[source,console]
+----
+$ git pull
+----
+
+Expected result: You should see a commit from `cloudbees-bot` with message:
+
+----
+commit abc123def456
+Author: CloudBees CasC <casc@cloudbees.io>
+Date:   Mon Mar 17 10:35:00 2025 +0000
+
+    CBP CASC sync
+----
+
+==== Step 5 - Verify in UI
+
+Navigate to CloudBees Unify:
+
+. Go to **Feature management > Flags**
+. Look for **default.DemoFeature** in the list
+. Click on the flag
+
+Expected results:
+
+[NOTE]
+====
+You should see:
+
+* Flag name: **default.DemoFeature**
+* Type: **Boolean**
+* Description: "My first CasC-managed feature flag"
+* Labels: **casc-demo**, **tutorial**
+* Production environment: **enabled**, default value **false**
+====
+
+=== Task 3 - Create Target Group via CasC
+
+Target groups allow you to segment users and apply flag values to specific audiences.
+
+==== Step 1 - Create Custom Property
+
+Create `.cloudbees/casc/feature-management/properties/user.email.yaml`:
+
+[source,yaml]
+----
+---
+apiVersion: v1
+kind: flag-properties
+
+name: user.email
+type: String
+description: "User email address for targeting"
+----
+
+==== Step 2 - Create Target Group
+
+Create `.cloudbees/casc/feature-management/target-groups/InternalTesters.yaml`:
+
+[source,yaml]
+----
+---
+apiVersion: featuremanagement.cloudbees.io/v1alpha1
+kind: target-group
+
+name: InternalTesters
+description: "Internal team members for early testing"
+
+conditions:
+  - property: user.email
+    operator: regex
+    operand: ".*@mycompany\\.com$"
+----
+
+**Available Operators by Property Type**:
+
+**String operators**:
+
+* `regex` - Regular expression match (requires `operand`)
+* `is-undefined` - Property not set
+* `in-array` - Value in list (requires `operand` as array)
+
+**Boolean operators**:
+
+* `is-true` - Property value is true
+* `is-false` - Property value is false
+* `is-undefined` - Property not set
+
+**Number operators**:
+
+* `gt` - Greater than (requires `operand`)
+* `gte` - Greater than or equal
+* `lt` - Less than
+* `lte` - Less than or equal
+* `eq` - Equal to
+* `semver-gte` - Semantic version greater than or equal
+
+==== Step 3 - Use Target Group in Flag
+
+Update `.cloudbees/casc/feature-management/flag-configurations/production/default.DemoFeature.config.yaml`:
+
+[source,yaml]
+----
+---
+apiVersion: featuremanagement.cloudbees.io/v1alpha1
+kind: flag-configuration
+
+flag: default.DemoFeature
+
+enabled: true
+
+stickinessProperty: rox.distinct_id
+
+conditions:
+  - group:
+      name: InternalTesters
+    value: true
+
+defaultValue: false
+----
+
+This configuration means:
+
+* Users matching **InternalTesters** group get `true`
+* All other users get `false` (defaultValue)
+
+==== Step 4 - Commit and Verify
+
+[source,console]
+----
+$ git add .cloudbees/casc/feature-management/properties/
+$ git add .cloudbees/casc/feature-management/target-groups/
+$ git add .cloudbees/casc/feature-management/flag-configurations/
+$ git commit -m "Add InternalTesters target group"
+$ git push
+----
+
+Wait for sync, then verify in UI:
+
+. Navigate to **Feature management > Target Groups**
+. Verify **InternalTesters** appears
+. Navigate to **Flags > default.DemoFeature > Production**
+. Verify condition shows: "InternalTesters → true"
+
+=== Task 4 - Percentage Rollout via CasC
+
+Percentage rollouts enable gradual feature releases and A/B testing.
+
+==== Step 1 - Create Flag for Rollout
+
+Create `.cloudbees/casc/feature-management/flags/default.GradualRollout.yaml`:
+
+[source,yaml]
+----
+---
+apiVersion: featuremanagement.cloudbees.io/v1alpha1
+kind: flag
+
+flag: default.GradualRollout
+flagType: boolean
+description: "Feature released gradually to all users"
+labels:
+  - rollout
+  - production
+
+availableValues:
+  - "true"
+  - "false"
+
+isPermanent: false
+----
+
+==== Step 2 - Configure Percentage Split
+
+Create `.cloudbees/casc/feature-management/flag-configurations/production/default.GradualRollout.config.yaml`:
+
+[source,yaml]
+----
+---
+apiVersion: featuremanagement.cloudbees.io/v1alpha1
+kind: flag-configuration
+
+flag: default.GradualRollout
+
+enabled: true
+
+stickinessProperty: rox.distinct_id
+
+defaultValue:
+  - percentage: 10
+    option: true
+  - percentage: 90
+    option: false
+
+conditions: []
+----
+
+**Percentage Split Requirements**:
+
+* Percentages must sum to exactly 100
+* Each split requires `percentage` and `option` fields
+* `option:` must match an `availableValues` entry from flag definition
+* Use `conditions: []` for global rollout (no targeting)
+
+**Common Rollout Patterns**:
+
+**Canary Release** (start small, increase gradually):
+
+[source,yaml]
+----
+# Week 1: 5% rollout
+defaultValue:
+  - percentage: 5
+    option: true
+  - percentage: 95
+    option: false
+
+# Week 2: 25% rollout (update same file)
+defaultValue:
+  - percentage: 25
+    option: true
+  - percentage: 75
+    option: false
+
+# Week 3: 50% rollout
+defaultValue:
+  - percentage: 50
+    option: true
+  - percentage: 50
+    option: false
+
+# Week 4: 100% rollout
+defaultValue:
+  - percentage: 100
+    option: true
+----
+
+**A/B Test** (50/50 split):
+
+[source,yaml]
+----
+defaultValue:
+  - percentage: 50
+    option: true
+  - percentage: 50
+    option: false
+----
+
+**Multi-Variant Test** (A/B/C):
+
+For multi-variant tests, create a string flag:
+
+`.cloudbees/casc/feature-management/flags/default.AlgoTest.yaml`:
+
+[source,yaml]
+----
+---
+apiVersion: featuremanagement.cloudbees.io/v1alpha1
+kind: flag
+
+flag: default.AlgoTest
+flagType: string
+description: "Test three recommendation algorithms"
+
+availableValues:
+  - "algo-v1"
+  - "algo-v2"
+  - "algo-v3"
+
+isPermanent: false
+----
+
+Configuration with three variants:
+
+[source,yaml]
+----
+---
+apiVersion: featuremanagement.cloudbees.io/v1alpha1
+kind: flag-configuration
+
+flag: default.AlgoTest
+
+enabled: true
+
+stickinessProperty: user.id
+
+defaultValue:
+  - percentage: 33
+    option: algo-v1
+  - percentage: 33
+    option: algo-v2
+  - percentage: 34
+    option: algo-v3
+
+conditions: []
+----
+
+==== Step 3 - Commit and Test
+
+[source,console]
+----
+$ git add .cloudbees/casc/feature-management/
+$ git commit -m "Add 10% gradual rollout"
+$ git push
+----
+
+Test the rollout by evaluating the flag with different user contexts:
+
+[source,go]
+----
+// Different users will get different values
+ctx1 := context.NewContext(map[string]interface{}{"email": "user1@example.com"})
+ctx2 := context.NewContext(map[string]interface{}{"email": "user2@example.com"})
+
+value1 := flags.GradualRollout.IsEnabled(ctx1)  // ~10% chance of true
+value2 := flags.GradualRollout.IsEnabled(ctx2)  // ~10% chance of true
+----
+
+=== Task 5 - Best Practices for CasC
+
+==== Workflow Pattern: UI First, CasC Second
+
+**Recommended Workflow**:
+
+. **Create flag in UI** - Use CloudBees UI to create initial flag
+. **Verify flag works** - Test in development environment
+. **Copy generated YAML** - CloudBees generates correct YAML format
+. **Add to Git** - Copy YAML to repository
+. **Use Git going forward** - All future changes via Git/PR
+
+**Why This Works**:
+
+* UI generates correct YAML format automatically
+* Avoids syntax errors and format issues
+* Provides working template to build from
+* Eliminates guesswork about required fields
+
+[IMPORTANT]
+====
+**Critical Format Tip**: If your flag configurations aren't syncing, create the flag in the UI first, then inspect the generated YAML in your repository after CloudBees syncs it. The UI-generated YAML is always correct. Use it as your template.
+====
+
+==== Field Naming Reference
+
+**Common Mistakes**:
+
+[source,yaml]
+----
+# ❌ WRONG - Will not sync
+flag-configuration:
+  value: false                    # Wrong field name
+  stickinessProperty: email       # Wrong property format
+
+# ✅ CORRECT
+flag-configuration:
+  defaultValue: false             # Correct field name
+  stickinessProperty: rox.distinct_id  # Built-in property
+----
+
+**Percentage Splits**:
+
+[source,yaml]
+----
+# ❌ WRONG - Missing 'option' field
+defaultValue:
+  - percentage: 50
+    value: true                   # Wrong field name
+
+# ✅ CORRECT
+defaultValue:
+  - percentage: 50
+    option: true                  # Correct field name
+----
+
+==== File Naming Conventions
+
+**Flag Definitions** (cross-environment):
+
+* Location: `.cloudbees/casc/feature-management/flags/`
+* Naming: `<namespace>.<FlagName>.yaml`
+* Examples:
+** `default.ShowNewEvent.yaml`
+** `default.EnablePayments.yaml`
+
+**Flag Configurations** (per-environment):
+
+* Location: `.cloudbees/casc/feature-management/flag-configurations/<environment>/`
+* Naming: `<namespace>.<FlagName>.config.yaml`
+* Examples:
+** `flag-configurations/production/default.ShowNewEvent.config.yaml`
+** `flag-configurations/dev/default.EnablePayments.config.yaml`
+
+**Target Groups**:
+
+* Location: `.cloudbees/casc/feature-management/target-groups/`
+* Naming: `<GroupName>.yaml`
+* Examples:
+** `BetaUsers.yaml`
+** `InternalTesters.yaml`
+
+**Custom Properties**:
+
+* Location: `.cloudbees/casc/feature-management/properties/`
+* Naming: `<namespace>.<propertyName>.yaml`
+* Examples:
+** `user.email.yaml`
+** `user.subscription_tier.yaml`
+
+==== Label Best Practices
+
+Labels help organize flags:
+
+[source,yaml]
+----
+labels:
+  - feature-area           # UI, API, payments, auth
+  - lifecycle-stage        # dev, staging, production
+  - flag-type             # experiment, rollout, kill-switch, ops
+  - team-owner            # platform-team, payments-team
+----
+
+**Example**:
+
+[source,yaml]
+----
+flag: default.NewCheckout
+labels:
+  - payments
+  - production
+  - experiment
+  - payments-team
+----
+
+Query flags by label in CloudBees UI for easier management.
+
+=== Task 6 - Troubleshooting CasC
+
+==== Issue: Flag Not Syncing from Git to UI
+
+**Symptoms**:
+
+* Pushed YAML changes to Git
+* No CloudBees bot commit appears
+* Flag not visible in UI
+
+**Diagnosis Steps**:
+
+. Check GitHub App permissions:
+** Navigate to GitHub organization settings
+** Verify CloudBees app has **Read and Write** permissions
+** Verify repository is included in app installation
+
+. Validate YAML syntax:
++
+[source,console]
+----
+$ yamllint .cloudbees/casc/feature-management/
+----
+
+. Check CloudBees integration status:
+** Navigate to **Settings > Configuration as Code**
+** Verify repository shows **Connected**
+** Check for error messages
+
+. Verify directory structure:
++
+[source,console]
+----
+$ tree .cloudbees/
+.cloudbees/
+└── casc
+    └── feature-management
+        ├── flags
+        ├── flag-configurations
+        │   └── production
+        ├── target-groups
+        └── properties
+----
+
+. Check for required fields:
+** `apiVersion: featuremanagement.cloudbees.io/v1alpha1`
+** `kind: flag` or `kind: flag-configuration`
+** `flag:` field present and matches across definition and configuration
+
+**Common Causes**:
+
+* Missing `.config.yaml` extension on configuration files
+* Incorrect `apiVersion` (must be `featuremanagement.cloudbees.io/v1alpha1`)
+* Environment folder name doesn't match CloudBees environment
+* Using `value:` instead of `defaultValue:`
+
+==== Issue: UI Changes Not Syncing to Git
+
+**Symptoms**:
+
+* Changed flag value in UI
+* No CloudBees bot commit in repository
+
+**Solutions**:
+
+. Verify bidirectional sync is enabled:
+** Navigate to **Settings > Configuration as Code**
+** Ensure **Sync UI changes to Git** is enabled
+
+. Check GitHub App write permissions:
+** App must have write access to push commits
+
+. Wait for sync interval:
+** UI-to-Git sync can take 1-2 minutes
+** Check for commits after waiting
+
+==== Issue: Merge Conflicts in CasC Files
+
+**Symptoms**:
+
+* Pull request has conflicts in `.cloudbees/casc/` directory
+* CloudBees bot commit conflicts with manual changes
+
+**Resolution**:
+
+When both UI and Git changes happen simultaneously:
+
+[source,console]
+----
+$ git pull
+# Conflict in flag configuration file
+
+$ git status
+both modified: .cloudbees/casc/feature-management/flag-configurations/production/default.MyFlag.config.yaml
+----
+
+**Resolution Strategy**:
+
+. Accept CloudBees bot version (UI is source of truth):
++
+[source,console]
+----
+$ git checkout --theirs .cloudbees/casc/feature-management/flag-configurations/production/default.MyFlag.config.yaml
+$ git add .
+$ git commit -m "Resolve conflict: accept UI changes"
+----
+
+. OR: Accept your version (Git is source of truth):
++
+[source,console]
+----
+$ git checkout --ours .cloudbees/casc/feature-management/flag-configurations/production/default.MyFlag.config.yaml
+$ git add .
+$ git commit -m "Resolve conflict: use Git version"
+$ git push
+----
+
+CloudBees will sync your pushed version back to the UI.
+
+**Prevention**:
+
+* Choose one path for changes: either UI or Git, not both simultaneously
+* Coordinate flag changes with team members
+* Use branch protection rules requiring PR reviews
+
+==== Issue: Silent Rejection of Configuration
+
+**Symptoms**:
+
+* YAML file pushed successfully
+* CloudBees bot commits appear
+* BUT flag configuration doesn't match YAML in UI
+
+**Common Causes**:
+
+CloudBees silently ignores invalid configurations. Check for:
+
+. **Wrong field names**:
++
+[source,yaml]
+----
+# CloudBees ignores this
+value: false              # Should be defaultValue: false
+----
+
+. **Missing required fields**:
++
+[source,yaml]
+----
+# Missing stickinessProperty and conditions
+flag: default.MyFlag
+enabled: true
+defaultValue: false
+# Will not apply - missing required fields
+----
+
+. **Invalid percentage sum**:
++
+[source,yaml]
+----
+# Percentages must sum to 100
+defaultValue:
+  - percentage: 50
+    option: true
+  - percentage: 40        # Only 90 total - invalid
+    option: false
+----
+
+. **Operator requires operand**:
++
+[source,yaml]
+----
+# regex operator requires operand
+conditions:
+  - property: email
+    operator: regex
+    # Missing: operand: ".*@company\\.com$"
+----
+
+**Validation Method**:
+
+After pushing, compare UI to your YAML:
+
+. Create flag in UI
+. Let CloudBees sync to Git
+. Compare generated YAML to your YAML
+. Look for field differences
+
+=== Task 7 - API Validation (Advanced)
+
+For automated testing of CasC configurations, use the CloudBees API to validate flags:
+
+==== Step 1 - Get API Credentials
+
+. Navigate to **Settings > API Keys**
+. Create new API key with **Read** permissions
+. Save key as environment variable:
++
+[source,console]
+----
+$ export CLOUDBEES_API_KEY="your-api-key"
+$ export CLOUDBEES_API_URL="https://api.cloudbees.io/v2"
+----
+
+==== Step 2 - Create Validation Script
+
+Create `scripts/validate-flags.sh`:
+
+[source,bash]
+----
+#!/bin/bash
+set -e
+
+FLAG_NAME="$1"
+ENVIRONMENT="${2:-production}"
+
+echo "Validating flag: $FLAG_NAME in $ENVIRONMENT"
+
+# Fetch flag configuration
+RESPONSE=$(curl -s -H "Authorization: Bearer ${CLOUDBEES_API_KEY}" \
+  "${CLOUDBEES_API_URL}/flags/${FLAG_NAME}/environments/${ENVIRONMENT}")
+
+# Check flag exists
+if echo "$RESPONSE" | jq -e '.name' > /dev/null; then
+  echo "✅ Flag exists in CloudBees"
+else
+  echo "❌ Flag not found in CloudBees"
+  exit 1
+fi
+
+# Check enabled status
+ENABLED=$(echo "$RESPONSE" | jq -r '.enabled')
+echo "Flag enabled: $ENABLED"
+
+# Check default value
+DEFAULT=$(echo "$RESPONSE" | jq -r '.defaultValue')
+echo "Default value: $DEFAULT"
+
+echo "✅ Validation complete"
+----
+
+Make script executable:
+
+[source,console]
+----
+$ chmod +x scripts/validate-flags.sh
+----
+
+==== Step 3 - Run Validation
+
+[source,console]
+----
+$ ./scripts/validate-flags.sh default.DemoFeature production
+----
+
+Expected output:
+
+----
+Validating flag: default.DemoFeature in production
+✅ Flag exists in CloudBees
+Flag enabled: true
+Default value: false
+✅ Validation complete
+----
+
+==== Step 4 - Integrate with CI/CD
+
+Add validation to your CI/CD pipeline:
+
+[source,yaml]
+----
+# Example: GitHub Actions workflow
+name: Validate CasC Configuration
+
+on:
+  pull_request:
+    paths:
+      - '.cloudbees/casc/feature-management/**'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Wait for CloudBees sync
+        run: sleep 60
+
+      - name: Validate flags
+        env:
+          CLOUDBEES_API_KEY: ${{ secrets.CLOUDBEES_API_KEY }}
+        run: |
+          for flag in .cloudbees/casc/feature-management/flags/*.yaml; do
+            FLAG_NAME=$(yq '.flag' "$flag")
+            ./scripts/validate-flags.sh "$FLAG_NAME"
+          done
+----
+
+This ensures all CasC changes are validated before merging.
+
+== Production Deployment
+
+=== Task 1 - Environment Promotion
+
+==== Step 1 - Configure Staging Environment
+
+Before promoting to Production, validate in Staging:
+
+. In CloudBees, select **Staging** environment for each flag
+. Configure flags identical to Development
+. Deploy application to staging infrastructure
+. Set `FM_KEY` to staging SDK key
+
+==== Step 2 - Staging Validation
+
+. Run full regression tests
+. Validate all flag variations
+. Test percentage rollouts
+. Verify targeting rules
+. Check impression recording
+
+==== Step 3 - Production Configuration
+
+. Select **Production** environment for each flag
+. Set conservative initial values:
+** New features: `false` or 0% rollout
+** Established features: `true` or 100%
+** Kill switches: `true` (enabled)
+
+. Apply approval workflows:
+** Require manager approval for Production flag changes
+** Configure in **Settings > Approval workflows**
+
+=== Task 2 - Deploy to EC2
+
+The repository includes CloudBees workflows for EC2 deployment.
+
+==== Step 1 - Configure Secrets
+
+In CloudBees Unify workflows, add secrets:
+
+* `DEV_FM_KEY` - Development SDK key
+* `STAGING_FM_KEY` - Staging SDK key (if applicable)
+* `PROD_FM_KEY` - Production SDK key
+
+==== Step 2 - Update Deployment Workflow
+
+Edit `.cloudbees/workflows/deploy-containers.yaml`:
+
+[source,yaml]
+----
+- name: Deploy containers via SSM
+  uses: docker://amazon/aws-cli:2.15.26
+  run: |
+    # ... existing deployment code
+
+    docker run -d --name backend \
+      --network theme-park \
+      -p 8080:8080 \
+      -e PORT=8080 \
+      -e ALLOWED_ORIGIN=http://${PUBLIC_IP} \
+      -e FM_KEY=${{ secrets.PROD_FM_KEY }} \
+      ${DOCKER_USERNAME}/theme-park-backend:${BACKEND_TAG}
+----
+
+==== Step 3 - Deploy
+
+. Trigger the deployment workflow
+. Verify application starts successfully
+. Check logs for "Feature Flags initialized successfully"
+. Access application and verify flag behavior
+
+=== Task 3 - Production Monitoring
+
+==== CloudBees Dashboards
+
+Monitor flag usage in CloudBees:
+
+. Navigate to **Feature management > Flags**
+. Review flag health indicators:
+** **Active**: Flag serving different values (healthy)
+** **Stale**: Flag serving same value for 7+ days (consider cleanup)
+** **Inactive**: No impressions for 7+ days (remove?)
+
+==== Application Logs
+
+Monitor SDK health in application logs:
+
+----
+Theme Park API listening on :8080
+Initializing Feature Flags...
+Feature Flags initialized successfully
+[ROX] Configuration fetched: 12 flags loaded
+[ROX] Polling started: 60 second interval
+----
+
+==== Metrics to Track
+
+* SDK initialization success rate
+* Flag evaluation latency
+* Impression delivery rate
+* Network connectivity to CloudBees
+
+== Best Practices
+
+=== Naming Conventions
+
+Use consistent, descriptive flag names:
+
+**Format**: `<area>-<feature>-<description>`
+
+**Examples**:
+
+* `ui-dashboard-dark-mode`
+* `api-payment-provider-stripe`
+* `ops-system-maintenance-mode`
+* `exp-pricing-discount-test`
+
+**Guidelines**:
+
+* Use lowercase with hyphens
+* Be descriptive but concise
+* Include feature area prefix
+* Avoid version numbers
+
+=== Flag Lifecycle Management
+
+**Temporary Flags** (most feature flags):
+
+* Create with end date in mind
+* Remove after full rollout
+* Archive in CloudBees
+* Clean up code
+
+**Permanent Flags** (operations & configuration):
+
+* Mark as permanent in CloudBees
+* Document purpose
+* Review quarterly
+* Examples: kill switches, regional settings
+
+**Cleanup Cadence**:
+
+* Weekly: Check for stale flags
+* Monthly: Review flag inventory
+* Quarterly: Archive unused flags
+
+=== Security Considerations
+
+**SDK Key Management**:
+
+* Never commit SDK keys to version control
+* Use environment variables or secrets management
+* Rotate keys if exposed
+* Use environment-specific keys
+
+**Access Control**:
+
+* Restrict Production flag changes to authorized users
+* Enable approval workflows
+* Audit flag change history
+* Use RBAC for team permissions
+
+**Network Security**:
+
+* Ensure TLS for CloudBees communication
+* Allow outbound HTTPS to `cloudbees.io`
+* Monitor for certificate issues
+
+=== Performance Optimization
+
+**SDK Configuration**:
+
+[source,go]
+----
+options := server.NewRoxOptions(server.RoxOptionsBuilder{
+    FetchInterval:     60 * time.Second,    // Backup polling interval (default: 60s, minimum: 30s)
+    ImpressionHandler: customHandler,       // Custom impression processing
+})
+----
+
+[NOTE]
+====
+The `FetchInterval` is the backup polling frequency. CloudBees uses Server-Sent Events (SSE) for instant flag updates, so configuration changes typically apply immediately without waiting for the next poll.
+====
+
+**Best Practices**:
+
+* Cache flag evaluations in performance-critical paths
+* Batch flag checks when possible
+* Use default values strategically
+* Monitor SDK performance metrics
+
+=== Code Practices
+
+**Good - Clear Boundaries**:
+
+[source,go]
+----
+if app.flags.EnableNewFeature.IsEnabled(ctx) {
+    return handleNewFeature(req)
+}
+return handleLegacyFeature(req)
+----
+
+**Bad - Scattered Checks**:
+
+[source,go]
+----
+result := process()
+if flags.NewFeature {
+    result = transform(result)
+}
+if flags.NewFeature {
+    return formatNew(result)
+}
+return formatOld(result)
+----
+
+== Troubleshooting
+
+=== Common Issues
+
+==== Issue: Flag Not Evaluating Correctly
+
+**Symptoms**:
+
+* Flag always returns default value
+* Changes in CloudBees not reflected
+
+**Diagnosis**:
+
+[source,console]
+----
+$ cd backend
+$ FM_KEY=your-key go run .
+----
+
+Check logs for:
+
+----
+✅ Good: Feature Flags initialized successfully
+❌ Bad: Feature Flags timed out, using defaults
+----
+
+**Solutions**:
+
+* Verify `FM_KEY` is correct (check for trailing whitespace)
+* Test network connectivity: `curl https://cloudbees.io`
+* Check firewall allows outbound HTTPS
+* Ensure SDK key is for correct environment
+
+==== Issue: Targeting Rules Not Working
+
+**Symptoms**:
+
+* All users get same variation
+* Percentage rollout not sticky
+
+**Diagnosis**:
+
+Check user context is passed:
+
+[source,go]
+----
+roxContext := context.NewContext(map[string]interface{}{
+    "email": email,  // Must match custom property in CloudBees
+})
+----
+
+**Solutions**:
+
+* Ensure `email` property is set in context and matches the custom property in CloudBees
+* Verify the **Stickiness property** in CloudBees is set to your custom property (not `rox.distinct_id`)
+* Verify user identifier is stable across sessions
+* Check CloudBees rules match property names exactly
+* Test with different user identifiers
+
+==== Issue: Percentage Rollout Not Sticky
+
+**Symptoms**: Same user sees different flag values on each refresh
+
+**Common Causes**:
+
+* Stickiness property in CloudBees doesn't match property name in code
+* Custom property not created in CloudBees UI
+* Empty or null context values being passed
+
+**Solutions**:
+
+* Verify custom property is created in CloudBees UI
+* Ensure stickiness property setting matches your code property name exactly
+* Confirm context contains valid, non-empty values
+* Wait a few seconds for SSE notification (typically instant) after configuration changes
+
+==== Issue: Impressions Not Recording
+
+**Symptoms**:
+
+* Flag impressions tab shows no data
+* Metrics not updating
+
+**Diagnosis**:
+
+Enable SDK debug logging and check for impression errors.
+
+**Solutions**:
+
+* Verify SDK initialized successfully
+* Check network connectivity
+* Ensure impression endpoint not blocked
+* Review SDK logs for errors
+
+==== Issue: Performance Degradation
+
+**Symptoms**:
+
+* Slow request processing
+* High latency
+
+**Diagnosis**:
+
+* Too many flag evaluations per request
+* SDK network calls blocking
+
+**Solutions**:
+
+* Cache flag values when appropriate
+* Batch flag evaluations
+* Use local evaluation mode
+* Review flag evaluation patterns
+
+=== Debug Mode
+
+Enable verbose SDK logging:
+
+[source,go]
+----
+import "github.com/rollout/rox-go/v5/core/logging"
+
+func main() {
+    logging.SetLogLevel(logging.LogLevelDebug)
+    // ... initialization
+}
+----
+
+Output example:
+
+----
+[DEBUG] ROX: Fetching configuration from https://cloudbees.io
+[DEBUG] ROX: Configuration received: 12 flags
+[DEBUG] ROX: Flag 'ShowNewEvent' evaluated: false (reason: default)
+[DEBUG] ROX: Impression queued for flag 'ShowNewEvent'
+[DEBUG] ROX: Impressions batch sent: 5 events
+----
+
+=== Support Resources
+
+**CloudBees Documentation**:
+
+* https://docs.cloudbees.com/docs/cloudbees-unify/latest/feature-management/
+
+**SDK Reference**:
+
+* Go SDK (rox-go): https://github.com/rollout/rox-go
+* CloudBees SDK Documentation: https://docs.cloudbees.com/docs/cloudbees-unify/latest/install-sdk/
+
+**CloudBees Support**:
+
+* Support portal: https://support.cloudbees.com
+* Community forums: https://community.cloudbees.com
+
+== Common Mistakes to Avoid
+
+Based on consultant feedback, here are frequent pitfalls and how to avoid them:
+
+=== Mistake 1: Forgetting to Return to Repository Root
+
+**Problem**: Commands fail because you're in the wrong directory.
+
+**Example**:
+[source,console]
+----
+$ cd backend
+$ go run .
+# Later...
+$ cd frontend  # Error! You're already in backend
+----
+
+**Solution**: Always check your location with `pwd` and navigate from repository root:
+[source,console]
+----
+$ pwd
+/Users/yourname/dup-theme-park-webapp
+
+$ cd backend
+# Do backend work
+$ cd ..
+
+$ pwd
+/Users/yourname/dup-theme-park-webapp
+
+$ cd frontend
+# Do frontend work
+----
+
+=== Mistake 2: Using Wrong Branch
+
+**Problem**: Starting with `feature-flags-complete` branch instead of `feature-flags-clean`.
+
+**Consequence**: SDK already installed, nothing to learn!
+
+**Solution**: Always verify branch at start:
+[source,console]
+----
+$ git branch
+* feature-flags-clean  ✅ Correct!
+  main
+
+# If on wrong branch:
+$ git checkout feature-flags-clean
+----
+
+=== Mistake 3: Committing .env Files
+
+**Problem**: Accidentally commit API keys to git repository.
+
+**Security Risk**: Keys exposed publicly, must be rotated immediately.
+
+**Solution**: Verify before every commit:
+[source,console]
+----
+$ git status
+
+# backend/.env should NOT appear in the list
+# frontend/.env should NOT appear in the list
+
+# If they appear:
+$ git reset HEAD backend/.env
+$ git reset HEAD frontend/.env
+----
+
+The `.gitignore` file already prevents this, but double-check!
+
+=== Mistake 4: Not Keeping Both Terminals Open
+
+**Problem**: Closing backend terminal while testing frontend.
+
+**Consequence**: Frontend shows "Network Error" or "Cannot connect to API".
+
+**Solution**: Use terminal tabs or split screen:
+[source,console]
+----
+# Terminal 1 (must stay open):
+$ cd backend && go run .
+Theme Park API listening on :8080
+
+# Terminal 2 (must stay open):
+$ cd frontend && npm run dev
+Local: http://localhost:5173/
+----
+
+Press `Ctrl+C` to stop, but keep both terminals alive!
+
+=== Mistake 5: Copy-Pasting FM_KEY with Extra Whitespace
+
+**Problem**: FM_KEY has leading/trailing spaces or newlines.
+
+**Example**:
+[source,properties]
+----
+FM_KEY= xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx    ← Extra spaces!
+----
+
+**Consequence**: SDK fails to initialize, flags return defaults.
+
+**Solution**: Trim whitespace carefully:
+[source,properties]
+----
+FM_KEY=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+----
+
+No spaces before or after the key!
+
+=== Mistake 6: Not Waiting for SDK Sync
+
+**Problem**: Expecting immediate flag updates after changing in CloudBees.
+
+**Reality**: The SDK uses Server-Sent Events (SSE) for instant notifications, typically updating within seconds. As a backup, the SDK polls every 60 seconds.
+
+**Solution**: Wait a few seconds for SSE notification, or restart backend for guaranteed immediate update:
+[source,console]
+----
+# Option 1: Wait (recommended)
+# Make change in CloudBees
+# Wait a few seconds (SSE is typically instant)
+# Refresh browser
+# If no update after 10 seconds, wait up to 60 seconds for polling
+
+# Option 2: Restart (guaranteed immediate)
+# Press Ctrl+C in backend terminal
+$ go run .
+----
+
+=== Mistake 7: Editing Code on Wrong Branch
+
+**Problem**: Making changes on `feature-flags-complete` instead of `clean`.
+
+**Consequence**: Can't compare your work with reference implementation.
+
+**Solution**: Check branch before every edit:
+[source,console]
+----
+$ git branch
+* feature-flags-clean  ✅ Safe to edit!
+
+# If on wrong branch:
+$ git stash  # Save your work
+$ git checkout feature-flags-clean
+$ git stash pop  # Restore your work
+----
+
+== Quick Reference Card
+
+=== Essential Commands
+
+**Check Current Location:**
+[source,console]
+----
+$ pwd
+----
+
+**Check Git Branch:**
+[source,console]
+----
+$ git branch
+----
+
+**Start Backend:**
+[source,console]
+----
+$ cd backend
+$ go run .
+----
+
+**Start Frontend:**
+[source,console]
+----
+$ cd frontend
+$ npm run dev
+----
+
+**Stop Servers:**
+----
+Press Ctrl+C in each terminal
+----
+
+**Compare with Solution:**
+[source,console]
+----
+$ git diff feature-flags-complete backend/main.go
+----
+
+**Reset to Clean State:**
+[source,console]
+----
+$ git checkout feature-flags-clean
+$ git reset --hard origin/feature-flags-clean
+----
+
+=== Essential URLs
+
+[cols="2,3"]
+|===
+|Purpose |URL
+
+|CloudBees Dashboard
+|https://cloudbees.io
+
+|Frontend Application
+|http://localhost:5173
+
+|Backend API Base
+|http://localhost:8080
+
+|Health Check
+|http://localhost:8080/api/health
+
+|Flags API
+|http://localhost:8080/api/flags
+
+|Events API
+|http://localhost:8080/api/events
+|===
+
+=== Keyboard Shortcuts
+
+[cols="2,3"]
+|===
+|Action |Shortcut
+
+|Stop server
+|`Ctrl+C`
+
+|Clear terminal
+|`Ctrl+L` or type `clear`
+
+|Search command history
+|`Ctrl+R`
+
+|Autocomplete filename
+|`Tab`
+
+|Refresh browser
+|`Cmd+R` (Mac) or `F5` (Linux)
+
+|Browser dev tools
+|`F12`
+
+|New terminal tab
+|`Cmd+T` (Mac) or `Ctrl+Shift+T` (Linux)
+|===
+
+=== File Locations
+
+[cols="2,3"]
+|===
+|File |Purpose
+
+|`backend/.env`
+|Backend configuration (FM_KEY)
+
+|`frontend/.env`
+|Frontend configuration (API URL)
+
+|`backend/main.go`
+|Flag definitions and initialization
+
+|`backend/handlers.go`
+|Flag evaluation logic
+
+|`frontend/src/App.jsx`
+|UI with conditional rendering
+
+|`frontend/src/api.js`
+|API client for flag fetching
+|===
+
+=== Flag Values Cheat Sheet
+
+**Boolean flags** (true/false):
+[source,go]
+----
+if app.flags.ShowNewEvent.IsEnabled(ctx) { ... }
+----
+
+**Number flags** (integers):
+[source,go]
+----
+max := app.flags.MaxTicketQuantity.GetValue(ctx)
+----
+
+**String flags** (text):
+[source,go]
+----
+provider := app.flags.PaymentProvider.GetValue(ctx)
+if provider == "stripe" { ... }
+----
+
+=== Troubleshooting Quick Checks
+
+**Backend won't start:**
+[source,console]
+----
+$ cd backend
+$ go mod download
+$ go build
+$ go run .
+----
+
+**Frontend won't start:**
+[source,console]
+----
+$ cd frontend
+$ rm -rf node_modules
+$ npm install
+$ npm run dev
+----
+
+**Flags not syncing:**
+[source,console]
+----
+$ grep FM_KEY backend/.env
+$ curl http://localhost:8080/api/flags
+$ curl -I https://cloudbees.io
+----
+
+**API not responding:**
+[source,console]
+----
+$ curl http://localhost:8080/api/health
+$ lsof -i :8080
+----
+
+== Bonus Features in Complete Branch
+
+The `feature-flags-complete` branch includes additional feature flags beyond those covered in this tutorial. These demonstrate advanced patterns and provide inspiration for your own implementations.
+
+=== Additional Flags Available
+
+**UI & User Experience:**
+
+* **`EnableDarkMode`**: Automatic dark theme switching when flag is enabled
+** When true, the entire UI switches to dark theme with styled backgrounds, text, and components
+** Includes a toggle button for manual light/dark mode switching
+** Demonstrates theme management and CSS variable switching
+
+* **`EnableReviews`**: Visitor reviews section
+** Displays user-generated reviews with ratings and comments
+** Demonstrates conditional content loading based on flag state
+
+* **`ShowWeatherWidget`**: Weather information widget
+** Colorful gradient widget displaying temperature and conditions
+** Demonstrates third-party API integration patterns
+
+**Backend & Operations:**
+
+* **`MaintenanceMode`**: System-wide maintenance mode
+** Middleware that blocks all requests except health checks
+** Returns proper HTTP 503 status with retry-after header
+** Demonstrates operational kill switch patterns
+
+* **`EnablePayments`**: Payment processing kill switch
+** Instantly disable payment processing in emergencies
+** Demonstrates defensive programming with graceful degradation
+
+* **`EnableGuestCheckout`**: Guest checkout without account
+** Toggle between authenticated and guest checkout flows
+** Demonstrates business rule configuration
+
+**Configuration & Experimentation:**
+
+* **`MaxTicketQuantity`**: Dynamic ticket quantity limits (Number flag)
+** Configure maximum tickets per order without code changes
+** Demonstrates numeric configuration flags
+
+* **`PaymentProvider`**: Payment processor selection (String flag)
+** Switch between payment providers (e.g., Stripe, PayPal)
+** Demonstrates string configuration flags
+
+* **`PricingExperiment`**: A/B pricing test (String flag)
+** Test different pricing strategies (control, discount10, bundle)
+** Demonstrates experimentation patterns with multiple variations
+
+=== Exploring the Complete Branch
+
+To explore these advanced features:
+
+[source,console]
+----
+$ git checkout feature-flags-complete
+$ cd backend && go run .
+$ cd ../frontend && npm run dev
+----
+
+Open `http://localhost:5173` and try enabling different flags in CloudBees to see how they affect the application.
+
+**Key Files to Review:**
+
+* `backend/main.go`: Complete flag definitions with all 12+ flags
+* `backend/handlers.go`: Flag evaluation logic and conditional responses
+* `frontend/src/App.jsx`: UI components that respond to flag states
+* `frontend/src/styles.css`: Dark mode CSS and themed components
+
+[TIP]
+====
+The complete branch serves as a reference implementation showing best practices for:
+
+* Organizing multiple flags by category (UI, Backend, Operations, Experimentation)
+* Implementing different flag types (Boolean, Number, String)
+* Progressive enhancement with feature flags
+* Clean code patterns for flag-driven logic
+====
+
+== Summary
+
+This guide demonstrated end-to-end CloudBees Unify Feature Management integration covering:
+
+* **SDK Setup**: Go backend and JavaScript frontend integration
+* **Flag Types**: Boolean, Number, and String flags
+* **Targeting**: User properties, target groups, and percentage rollouts
+* **Patterns**: Kill switches, A/B experiments, and progressive rollouts
+* **Operations**: Real-time updates, monitoring, and emergency rollbacks
+* **Best Practices**: Naming, lifecycle management, and technical debt prevention
+
+**Key Capabilities**:
+
+* Deploy code without releasing features
+* Test in production with controlled exposure
+* Instant feature rollback without code changes
+* Gradual rollouts with user targeting
+* A/B experimentation and optimization
+* Operational kill switches for emergencies
+
+**Next Steps**:
+
+* Create your first feature flag
+* Integrate SDKs into your application
+* Implement progressive rollout strategy
+* Set up monitoring and alerts
+* Plan flag lifecycle management
+
+== Additional Resources
+
+* **CloudBees Unify Documentation**: https://docs.cloudbees.com/docs/cloudbees-unify/latest/
+* **SDK Examples**: https://github.com/cloudbees-examples/
+* **Best Practices Guide**: See ISP Unit 4 training materials
+* **API Reference**: https://docs.cloudbees.com/docs/cloudbees-unify/latest/api-reference/
+* **Support**: https://support.cloudbees.com

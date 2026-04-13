@@ -1,145 +1,150 @@
-# jkomrij-unify-app
+# Theme Park Feature Flag Demo
 
-A very small CloudBees Unify playground app.
+A React + Go demonstration application for CloudBees Feature Management integration. This repository includes a complete implementation guide (`FEATURE_FLAGS_SETUP.adoc`) that teaches consultants how to integrate feature flags into applications.
 
-This starter gives you two useful learning paths in one repository:
+**What this repository contains:**
+- Complete Feature Management implementation guide
+- Working demo application (theme park with tickets, events, promotions)
+- Three branches for different learning paths:
+  - `main` - Latest stable implementation
+  - `feature-flags-clean` - Starting point for guided tutorial
+  - `feature-flags-complete` - Reference implementation
 
-1. **GitHub App + GitHub Actions + CloudBees Unify**
-   - Push to the repo and watch the workflow run.
-   - Create a CloudBees Unify component that points at this repository.
-   - See workflow runs appear in CloudBees Unify.
+## Using the Tutorial
 
-2. **Feature management**
-   - Start the app locally.
-   - Add your CloudBees server-side SDK key.
-   - Change feature flags in CloudBees Unify and watch the page behavior change.
+For the complete step-by-step implementation guide, see **[FEATURE_FLAGS_SETUP.adoc](FEATURE_FLAGS_SETUP.adoc)**.
 
-## What the app does
+The tutorial covers:
+- Prerequisites and environment setup
+- CloudBees Unify configuration
+- Backend SDK integration (Go)
+- Frontend integration patterns
+- Advanced patterns (percentage rollouts, target groups, user properties)
+- Troubleshooting and best practices
 
-The app is intentionally simple.
+## Quick Start (Demo App Only)
 
-- It serves a single page.
-- It reads three request context values from the URL query string:
-  - `email`
-  - `plan`
-  - `region`
-- It evaluates four feature flags:
-  - `showExcitedGreeting`
-  - `showDebugPanel`
-  - `greetingColor`
-  - `releaseMessage`
+If you want to run the demo application without following the full tutorial:
 
-Example URL:
+### Backend
 
 ```bash
-http://localhost:3000/?email=jade@example.com&plan=pro&region=us
-```
-
-## Local setup
-
-### 1) Add the files to your repo
-
-Copy this starter into your `goobed/jkomrij-unify-app` repository.
-
-### 2) Install dependencies
-
-```bash
-npm install
-```
-
-### 3) Create your environment file
-
-```bash
+cd backend
 cp .env.example .env
+# edit .env as needed
+
+go run .
 ```
 
-### 4) Add your CloudBees server-side SDK key
+The API will start on `http://localhost:8080`.
 
-Edit `.env` and set:
+**Feature Flags:** Set `FM_KEY` in `backend/.env` to your CloudBees Feature Management API key to enable feature flags. Without this key, the app will use default flag values defined in the code (see `backend/main.go`).
 
-```bash
-CLOUDBEES_ROX_SERVER_KEY=your_server_side_sdk_key_here
-```
-
-If you leave the key empty, the app still runs using the default values defined in code.
-
-### 5) Start the app
+### Frontend
 
 ```bash
+cd frontend
+cp .env.example .env
+npm install
 npm run dev
 ```
 
-Then open:
+The site will be available at `http://localhost:5173`.
 
-```bash
-http://localhost:3000/?email=jade@example.com&plan=pro&region=us
-```
+## Branches
 
-## How to use this with CloudBees Unify
+This repository has three branches for different purposes:
 
-### GitHub Actions side
+- **`main`** - Latest stable version with all features implemented
+- **`feature-flags-clean`** - Starting point for the tutorial (no SDK installed)
+- **`feature-flags-complete`** - Reference implementation to compare your work
 
-1. Make sure the **CloudBees GitHub App** is installed for this repository.
-2. Confirm the CloudBees GitHub App installation includes the permissions CloudBees documents for GHA integration.
-3. Push this code to `main`, or manually trigger the workflow with **workflow_dispatch**.
-4. In CloudBees Unify, create a **component** using this connected repository.
-5. After integration is complete, new GitHub Actions runs from this repo should appear in CloudBees Unify.
+For the tutorial, start with: `git checkout feature-flags-clean`
 
-### Feature flag side
+## API Endpoints
 
-1. In CloudBees Unify, go to Feature Management and get the **Node.js server-side SDK key** for your environment.
-2. Put that key in `.env` as `CLOUDBEES_ROX_SERVER_KEY`.
-3. Run the app locally.
-4. Once the app connects, the flags defined in `src/flags.js` are available in the UI.
-5. The custom properties used here are:
-   - `email`
-   - `plan`
-   - `region`
-   - `environment`
+- `GET /api/health`
+- `GET /api/flags`
+- `GET /api/events`
+- `GET /api/promotions?segment=vip`
+- `POST /api/tickets/purchase`
 
-Because the app passes request context into flag evaluation, you can test targeting rules by changing the URL query string.
+## Feature Management Integration
 
-## Good first experiments
+The application demonstrates CloudBees Feature Management integration patterns:
 
-### Toggle a boolean flag
+**Backend (Go):**
+- `backend/main.go` - CloudBees SDK initialization and flag definitions
+- `backend/handlers.go` - Flag evaluation in API endpoints with user context
+- Feature flags control business logic, API responses, and feature availability
 
-Set `showExcitedGreeting` to `true` and refresh the page.
+**Frontend (React):**
+- `frontend/src/App.jsx` - Reads flag states from backend API
+- Conditionally renders UI components based on flag values
+- Backend-only SDK pattern (frontend doesn't include CloudBees SDK)
 
-### Change a string flag
+**Patterns Demonstrated:**
+- Boolean flags (on/off toggles)
+- Percentage rollouts with sticky behavior
+- User targeting with custom properties
+- Target groups for segment-based rollouts
+- Kill switches for operational control
 
-Change `greetingColor` from `slate` to `emerald`, `amber`, or `rose`.
+## Infrastructure (Terraform)
 
-### Try targeting
+Terraform lives in `infra/terraform` and provisions a free-tier EC2 instance on the default VPC. The Unify workflow `Deploy EC2` runs `terraform init` and `terraform apply` using AWS credentials stored in CloudBees secrets.
 
-Create a rule so `releaseMessage = Pilot enabled` only when:
+Key inputs to set in Unify vars:
 
-- `plan == pro`
-- or `region == us`
+- `AWS_DEFAULT_REGION`
+- `EC2_INSTANCE_NAME`
+- `EC2_INSTANCE_TYPE`
+- `EC2_KEY_NAME`
+- `EC2_ALLOWED_HTTP_CIDR` (comma-separated list)
 
-Then compare these URLs:
+Remote state inputs (required for reliable create/destroy across workflows):
 
-```bash
-http://localhost:3000/?email=a@example.com&plan=free&region=eu
-http://localhost:3000/?email=b@example.com&plan=pro&region=us
-```
+- `TF_STATE_BUCKET`
+- `TF_STATE_KEY` (example: `theme-park/terraform.tfstate`)
+- `TF_STATE_REGION`
 
-## Project structure
+Note: DynamoDB state locking is optional; this setup uses S3 only for lower cost.
 
-```text
-.
-├── .github/workflows/unify-playground.yml
-├── .env.example
-├── __tests__/app.test.js
-├── src/app.js
-├── src/flags.js
-├── src/server.js
-├── views/index.ejs
-├── jest.config.js
-└── package.json
-```
+## Deployment workflow
 
-## Notes
+The `Deploy containers` workflow pulls the backend and frontend images from Docker Hub and runs them on the EC2 instance via SSH. It prints the public IP so you can access:
 
-- The GitHub Actions workflow intentionally keeps the job ID as `test` and does **not** add a `name:` field to the job itself.
-- The app is designed to be useful even before you add a real SDK key.
-- The `/api/status` endpoint is handy for checking exactly which context values and flag values are being used.
+- `http://<public-ip>` (frontend)
+- `http://<public-ip>:8080/api/health` (backend)
+
+Required secrets/vars:
+
+- Var: `QUICKSTART_DOCKER_USERNAME`
+- Secret: `QUICKSTART_DOCKER_TOKEN`
+
+This workflow now uses AWS SSM instead of SSH, so no inbound SSH access is required.
+
+Optional image tag vars (default to `1.0.0`):
+
+- `BACKEND_IMAGE_TAG`
+- `FRONTEND_IMAGE_TAG`
+
+Optional build var:
+
+- `VITE_API_BASE_URL` (leave empty to use the built-in reverse proxy on EC2)
+
+## Documentation
+
+- **[FEATURE_FLAGS_SETUP.adoc](FEATURE_FLAGS_SETUP.adoc)** - Complete implementation guide (primary deliverable)
+- **[BRANCHES_README.md](BRANCHES_README.md)** - Guide to repository branches
+- **[CLAUDE.md](CLAUDE.md)** - Standards for adoption journey implementation guides
+- **[PEDAGOGICAL_REVIEW.md](PEDAGOGICAL_REVIEW.md)** - Tutorial quality checklist
+- **[STANDARDS_REVIEW.md](STANDARDS_REVIEW.md)** - CLAUDE.md compliance audit
+
+## Repository Purpose
+
+This repository serves as both:
+1. **A working demo application** for CloudBees Feature Management
+2. **An adoption journey implementation guide** for PS consultants
+
+The guide follows CloudBees Professional Services standards and can be used to teach customers Feature Management integration patterns.
