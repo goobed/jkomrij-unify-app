@@ -1,0 +1,16 @@
+---
+apiVersion: featuremanagement.cloudbees.io/v1alpha1
+kind: flag
+
+flag: default.DemoFeature
+flagType: boolean
+description: "My first CasC-managed feature flag"
+labels:
+  - casc-demo
+  - tutorial
+
+availableValues:
+  - "true"
+  - "false"
+
+isPermanent: false
