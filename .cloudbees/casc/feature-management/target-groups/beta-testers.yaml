@@ -1,0 +1,15 @@
+---
+apiVersion: featuremanagement.cloudbees.io/v1alpha1
+kind: target-group
+
+name: beta-testers
+
+description: Internal users testing new features
+
+conditions:
+  allOf:
+    - property:
+        name: email
+        operator: regex
+        operands:
+            - .*@yourcompany\.com$

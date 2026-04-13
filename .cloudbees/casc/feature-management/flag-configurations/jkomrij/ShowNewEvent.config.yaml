@@ -1,0 +1,17 @@
+---
+apiVersion: featuremanagement.cloudbees.io/v1alpha1
+kind: flag-configuration
+
+flag: ShowNewEvent
+
+enabled: true
+
+stickinessProperty: email
+
+defaultValue:
+  - percentage: 20
+    option: true
+  - percentage: 80
+    option: false
+
+conditions: []

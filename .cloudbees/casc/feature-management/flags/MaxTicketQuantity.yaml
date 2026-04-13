@@ -1,0 +1,15 @@
+---
+apiVersion: featuremanagement.cloudbees.io/v1alpha1
+kind: flag
+
+flag: MaxTicketQuantity
+flagType: number
+description: ""
+labels:
+
+availableValues:
+  - "4"
+  - "10"
+  - "20"
+
+isPermanent: false

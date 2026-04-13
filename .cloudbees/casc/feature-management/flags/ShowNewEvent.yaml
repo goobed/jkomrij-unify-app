@@ -1,0 +1,14 @@
+---
+apiVersion: featuremanagement.cloudbees.io/v1alpha1
+kind: flag
+
+flag: ShowNewEvent
+flagType: boolean
+description: Controls visibility of the After Dark Parade event
+labels:
+
+availableValues:
+  - "false"
+  - "true"
+
+isPermanent: false

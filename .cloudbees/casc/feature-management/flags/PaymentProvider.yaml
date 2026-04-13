@@ -1,0 +1,15 @@
+---
+apiVersion: featuremanagement.cloudbees.io/v1alpha1
+kind: flag
+
+flag: PaymentProvider
+flagType: string
+description: ""
+labels:
+
+availableValues:
+  - stripe
+  - paypal
+  - square
+
+isPermanent: false

@@ -1,0 +1,21 @@
+---
+apiVersion: featuremanagement.cloudbees.io/v1alpha1
+kind: flag-configuration
+
+flag: TicketUpsells
+
+enabled: true
+
+stickinessProperty: rox.distinct_id
+
+defaultValue: false
+
+conditions:
+  - allOf:
+      - property:
+          name: plan
+          operator: in-array
+          operands:
+            - premium
+            - enterprise
+    flagValue: true
