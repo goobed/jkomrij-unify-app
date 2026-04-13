@@ -1,0 +1,11 @@
+---
+apiVersion: featuremanagement.cloudbees.io/v1alpha1
+kind: target-group
+
+name: InternalTesters
+description: "Internal team members for early testing"
+
+conditions:
+  - property: user.email
+    operator: regex
+    operand: ".*@mycompany\\.com$"

@@ -1,0 +1,7 @@
+---
+apiVersion: v1
+kind: flag-properties
+
+name: user.email
+type: String
+description: "User email address for targeting"
