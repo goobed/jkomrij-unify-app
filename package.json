@@ -1,0 +1,27 @@
+{
+  "name": "jkomrij-unify-app",
+  "version": "0.1.0",
+  "description": "Small CloudBees Unify playground app for GitHub + feature flags learning.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "test": "jest --runInBand",
+    "test:ci": "jest --runInBand --ci"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "ejs": "^3.1.10",
+    "express": "^4.21.2",
+    "rox-node": "^6.0.8"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "jest-junit": "^16.0.0",
+    "nodemon": "^3.1.9",
+    "supertest": "^7.0.0"
+  }
+}
